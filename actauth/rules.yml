@@ -1,0 +1,17 @@
+# decision: allow, not ask — deliberately, and worth being explicit about
+# why. This tool has no destructive real-world side effect the way
+# issue_refund/send_email do (see loopengine's own ABILITIES.md on
+# cost-vs-danger gating); the actual risk is pure API spend, and the
+# entire point of this ability is generating a full 18-20 image batch in
+# one agent run. Gating every call behind an individual human approval
+# would mean 18-20 separate approvals per batch, defeating that.
+#
+# If you want a cost ceiling instead, the two real options: change this
+# rule's decision to "ask" (trades bulk-generation convenience for a
+# per-image approval), or don't grant this tool at all and generate in
+# smaller, human-supervised batches by calling it from outside a single
+# unattended run.
+- name: generate-ad-image-allowed
+  scope: "*/*"
+  tool: generate_ad_image
+  decision: allow
