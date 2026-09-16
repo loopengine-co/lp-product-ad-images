@@ -1,11 +1,11 @@
 ---
-name: product-ad-images
-description: How to plan and generate a full set of Google Ads product image assets with generate_ad_image — the mix of shot types, how to write a good scene_prompt, and why every call needs the real product photo.
+name: product-google-ad-images
+description: How to plan and generate a full set of Google Ads product image assets with generate_google_ad_image — the mix of shot types, how to write a good scene_prompt, and why every call needs the real product photo.
 ---
 
 # Product ad images
 
-`generate_ad_image` runs one real generation per call and exports it as
+`generate_google_ad_image` runs one real generation per call and exports it as
 every ratio you pass in `aspect_ratios` — all sharing the exact same
 underlying photo, not independently regenerated per ratio (image
 generation isn't deterministic; two separate calls for "the same shot"

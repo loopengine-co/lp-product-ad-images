@@ -22,10 +22,10 @@ const SHOT_TYPE_PREFIX: Record<ShotType, string> = {
 
 function parseAspectRatio(spec: string): number {
   const match = spec.match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/)
-  if (!match) throw new Error(`generate_ad_image: aspect_ratio must look like "1.91:1" — got "${spec}"`)
+  if (!match) throw new Error(`generate_google_ad_image: aspect_ratio must look like "1.91:1" — got "${spec}"`)
   const w = Number(match[1])
   const h = Number(match[2])
-  if (w <= 0 || h <= 0) throw new Error(`generate_ad_image: aspect_ratio must be positive — got "${spec}"`)
+  if (w <= 0 || h <= 0) throw new Error(`generate_google_ad_image: aspect_ratio must be positive — got "${spec}"`)
   return w / h
 }
 
@@ -97,7 +97,7 @@ const OPENAI_NATIVE_SIZES = [
 
 async function generateWithOpenAI({ productBytes, productContentType, prompt, widestRatio, quality }: GenerationArgs): Promise<Generation> {
   const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) throw new Error('generate_ad_image: OPENAI_API_KEY is not set (required when AD_IMAGE_PROVIDER=openai, the default)')
+  if (!apiKey) throw new Error('generate_google_ad_image: OPENAI_API_KEY is not set (required when AD_IMAGE_PROVIDER=openai, the default)')
   const model = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1'
 
   const nativeSize = OPENAI_NATIVE_SIZES.reduce((best, size) => {
@@ -120,11 +120,11 @@ async function generateWithOpenAI({ productBytes, productContentType, prompt, wi
   })
   if (!res.ok) {
     const detail = await res.text().catch(() => '')
-    throw new Error(`generate_ad_image: OpenAI image edit failed (HTTP ${res.status}) ${detail.slice(0, 300)}`)
+    throw new Error(`generate_google_ad_image: OpenAI image edit failed (HTTP ${res.status}) ${detail.slice(0, 300)}`)
   }
   const body = (await res.json()) as { data?: { b64_json?: string }[] }
   const b64 = body.data?.[0]?.b64_json
-  if (!b64) throw new Error('generate_ad_image: OpenAI response carried no image data')
+  if (!b64) throw new Error('generate_google_ad_image: OpenAI response carried no image data')
 
   return { buffer: Buffer.from(b64, 'base64'), width: nativeSize.width, height: nativeSize.height }
 }
@@ -172,7 +172,7 @@ function findImageData(body: unknown): string | undefined {
 
 async function generateWithGoogle({ productBytes, productContentType, prompt, widestRatio, quality }: GenerationArgs): Promise<Generation> {
   const apiKey = process.env.GEMINI_API_KEY
-  if (!apiKey) throw new Error('generate_ad_image: GEMINI_API_KEY is not set (required when AD_IMAGE_PROVIDER=google)')
+  if (!apiKey) throw new Error('generate_google_ad_image: GEMINI_API_KEY is not set (required when AD_IMAGE_PROVIDER=google)')
   const model = process.env.GOOGLE_IMAGE_MODEL || 'gemini-3.1-flash-image' // Nano Banana 2; set to gemini-3-pro-image for Nano Banana Pro
 
   const aspectRatio = nearestGooglePreset(widestRatio)
@@ -192,24 +192,24 @@ async function generateWithGoogle({ productBytes, productContentType, prompt, wi
   })
   if (!res.ok) {
     const detail = await res.text().catch(() => '')
-    throw new Error(`generate_ad_image: Google image edit failed (HTTP ${res.status}) ${detail.slice(0, 300)}`)
+    throw new Error(`generate_google_ad_image: Google image edit failed (HTTP ${res.status}) ${detail.slice(0, 300)}`)
   }
   const body: unknown = await res.json()
   const b64 = findImageData(body)
-  if (!b64) throw new Error('generate_ad_image: Google response carried no image data')
+  if (!b64) throw new Error('generate_google_ad_image: Google response carried no image data')
 
   const buffer = Buffer.from(b64, 'base64')
   // Read real dimensions off the actual bytes rather than assuming what
   // a given aspect_ratio+image_size pair produces — the crop step below
   // needs the truth, not a guess.
   const meta = await sharp(buffer).metadata()
-  if (!meta.width || !meta.height) throw new Error('generate_ad_image: could not read generated image dimensions')
+  if (!meta.width || !meta.height) throw new Error('generate_google_ad_image: could not read generated image dimensions')
 
   return { buffer, width: meta.width, height: meta.height }
 }
 
-export const generateAdImage: ToolDefinition = {
-  name: 'generate_ad_image',
+export const generateGoogleAdImage: ToolDefinition = {
+  name: 'generate_google_ad_image',
   description:
     'Generate one photo shoot — a real image-edit call against the product photo — and export it as one or more Google Ads aspect ratios from that single generation. Pass every ratio that should share the exact same content/style/composition in one call (e.g. ["1.91:1", "1:1"] for matching landscape+square); call again separately for a shot that needs its own distinct composition (typically portrait — see the skill for why). Each call is one real, metered generation regardless of how many ratios you pass.',
   input_schema: {
@@ -253,13 +253,13 @@ export const generateAdImage: ToolDefinition = {
     // cost/quality/quota reasons that don't vary shot to shot.
     const provider = process.env.AD_IMAGE_PROVIDER || 'openai'
     if (provider !== 'openai' && provider !== 'google') {
-      throw new Error(`generate_ad_image: AD_IMAGE_PROVIDER must be "openai" or "google" — got "${provider}"`)
+      throw new Error(`generate_google_ad_image: AD_IMAGE_PROVIDER must be "openai" or "google" — got "${provider}"`)
     }
 
     const productImageUrl = String(input.product_image_url)
     const shotType = String(input.shot_type) as ShotType
     if (!(shotType in SHOT_TYPE_PREFIX)) {
-      throw new Error(`generate_ad_image: shot_type must be one of ${Object.keys(SHOT_TYPE_PREFIX).join(', ')} — got "${shotType}"`)
+      throw new Error(`generate_google_ad_image: shot_type must be one of ${Object.keys(SHOT_TYPE_PREFIX).join(', ')} — got "${shotType}"`)
     }
     const scenePrompt = String(input.scene_prompt)
     const aspectRatioSpecs =
@@ -268,7 +268,7 @@ export const generateAdImage: ToolDefinition = {
     const quality = typeof input.quality === 'string' && input.quality ? input.quality : 'high'
 
     const productRes = await fetch(productImageUrl)
-    if (!productRes.ok) throw new Error(`generate_ad_image: could not fetch product_image_url (HTTP ${productRes.status})`)
+    if (!productRes.ok) throw new Error(`generate_google_ad_image: could not fetch product_image_url (HTTP ${productRes.status})`)
     const productBytes = Buffer.from(await productRes.arrayBuffer())
     const productContentType = productRes.headers.get('content-type') || 'image/png'
 

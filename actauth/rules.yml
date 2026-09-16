@@ -11,7 +11,7 @@
 # per-image approval), or don't grant this tool at all and generate in
 # smaller, human-supervised batches by calling it from outside a single
 # unattended run.
-- name: generate-ad-image-allowed
+- name: generate-google-ad-image-allowed
   scope: "*/*"
-  tool: generate_ad_image
+  tool: generate_google_ad_image
   decision: allow

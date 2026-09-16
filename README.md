@@ -7,7 +7,7 @@ asset set instead of just generating one shot at a time.
 
 ## What's in it
 
-- **Tool** — `generate_ad_image(product_image_url, shot_type, scene_prompt, aspect_ratios?, quality?)`.
+- **Tool** — `generate_google_ad_image(product_image_url, shot_type, scene_prompt, aspect_ratios?, quality?)`.
   Fetches the real product photo and sends it to an image-edit model
   along with a `shot_type`-specific instruction to keep the product
   exactly as shown — not a text-only reinterpretation of it. `shot_type`
@@ -46,11 +46,11 @@ asset set instead of just generating one shot at a time.
   `path` is a real file written to disk (`AD_IMAGE_OUTPUT_DIR`), not a
   URL or inline base64, so a full multi-format batch doesn't blow the
   conversation's own context budget.
-- **Skill** — `product-ad-images`: which ratios to combine in one call
-  vs. keep separate, a suggested shot-type mix, how to write a
+- **Skill** — `product-google-ad-images`: which ratios to combine in one
+  call vs. keep separate, a suggested shot-type mix, how to write a
   `scene_prompt` that actually varies shot to shot, and why the tool
   needs the real product photo rather than a description of it.
-- **actauth rule** — `generate-ad-image-allowed`, `decision: allow`.
+- **actauth rule** — `generate-google-ad-image-allowed`, `decision: allow`.
   Deliberately not gated behind a human `ask` — see the rule file's own
   comment for why (this is a cost-per-call tool, not a destructive one,
   and the whole point is generating a full batch in one unattended run).

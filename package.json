@@ -1,7 +1,7 @@
 {
   "name": "lp-product-ad-images",
-  "version": "1.1.0",
-  "description": "A loopengine ability: a generate_ad_image tool (OpenAI or Google Nano Banana image-edit, real product photo in) plus a skill for planning a full Google Ads asset set.",
+  "version": "1.2.0",
+  "description": "A loopengine ability: a generate_google_ad_image tool (OpenAI or Google Nano Banana image-edit, real product photo in) plus a skill for planning a full Google Ads asset set.",
   "license": "MIT",
   "keywords": ["loopengine", "loopengine-ability", "google-ads", "product-photography", "image-generation", "openai", "nano-banana", "gemini"],
   "files": [

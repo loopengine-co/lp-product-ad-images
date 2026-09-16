@@ -1,7 +1,7 @@
 {
   "loopengineVersion": "^0.1.24",
-  "tools": ["tools/generate_ad_image.ts"],
-  "skills": ["skills/product-ad-images"],
+  "tools": ["tools/generate_google_ad_image.ts"],
+  "skills": ["skills/product-google-ad-images"],
   "actauth": "actauth/rules.yml",
   "env": [
     { "name": "AD_IMAGE_PROVIDER", "description": "Which image model actually generates: \"openai\" (default) or \"google\" (Nano Banana 2 / Nano Banana Pro). Only one provider's API key below is required, matching whichever you pick.", "secret": false },
