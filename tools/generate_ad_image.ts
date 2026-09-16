@@ -20,30 +20,6 @@ const SHOT_TYPE_PREFIX: Record<ShotType, string> = {
     'Photorealistic lifestyle hero/cover photography for an ad campaign. Keep the product exactly as shown in the reference image — same shape, colors, proportions, and any printed text or logo, unchanged. Aspirational, editorial setting and natural lighting; the product is present and identifiable but the scene itself carries the mood, not a tight product close-up.',
 }
 
-// gpt-image-* models only ever generate at a small fixed set of native
-// sizes — there is no way to request an arbitrary ratio like Google
-// Ads' 1.91:1 landscape or 9:16 portrait specs directly from the API.
-// Picking whichever native size is *closest* to the actual target ratio
-// (see nearestNativeSize) and cropping the small remainder off that,
-// rather than always generating landscape and cropping everything down
-// to it, matters most for portrait: cropping a 9:16 frame out of a
-// 1536x1024 landscape source would throw away most of the composition
-// the model actually produced; generating at the native 1024x1536
-// portrait size instead keeps nearly all of it.
-const NATIVE_SIZES = [
-  { width: 1536, height: 1024 }, // landscape
-  { width: 1024, height: 1024 }, // square
-  { width: 1024, height: 1536 }, // portrait
-] as const
-
-function nearestNativeSize(targetRatio: number): (typeof NATIVE_SIZES)[number] {
-  return NATIVE_SIZES.reduce((best, size) => {
-    const bestDiff = Math.abs(best.width / best.height - targetRatio)
-    const diff = Math.abs(size.width / size.height - targetRatio)
-    return diff < bestDiff ? size : best
-  })
-}
-
 function parseAspectRatio(spec: string): number {
   const match = spec.match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/)
   if (!match) throw new Error(`generate_ad_image: aspect_ratio must look like "1.91:1" — got "${spec}"`)
@@ -53,12 +29,12 @@ function parseAspectRatio(spec: string): number {
   return w / h
 }
 
-// Center-crop only, off whichever native size was actually generated —
+// Center-crop only, off whichever size a provider actually generated —
 // this ability's whole point is that the product itself must stay
 // exactly as generated, so cropping never resizes or distorts it, only
 // trims from whichever axis the target ratio is narrower on (often
-// nothing at all, when the target matches a native size exactly, like
-// the square case).
+// nothing at all, when the target matches what was generated exactly,
+// like the square case usually does).
 function cropRectFor(
   targetRatio: number,
   source: { width: number; height: number },
@@ -88,6 +64,148 @@ function slugify(text: string): string {
 
 function ratioLabel(spec: string): string {
   return spec.replace(/[^0-9]+/g, '-').replace(/^-+|-+$/g, '')
+}
+
+interface Generation {
+  buffer: Buffer
+  width: number
+  height: number
+}
+
+interface GenerationArgs {
+  productBytes: Buffer
+  productContentType: string
+  prompt: string
+  widestRatio: number
+  quality: string
+}
+
+// gpt-image-* only ever generates at a small fixed set of native pixel
+// sizes — there is no way to request an arbitrary ratio like Google
+// Ads' 1.91:1 landscape or 9:16 portrait specs directly. Picking
+// whichever native size is *closest* to the actual widest requested
+// ratio, rather than always generating landscape and cropping
+// everything down to it, matters most for portrait: cropping a 9:16
+// frame out of a 1536x1024 landscape source would throw away most of
+// the composition; generating at the native 1024x1536 portrait size
+// instead keeps nearly all of it.
+const OPENAI_NATIVE_SIZES = [
+  { width: 1536, height: 1024 }, // landscape
+  { width: 1024, height: 1024 }, // square
+  { width: 1024, height: 1536 }, // portrait
+] as const
+
+async function generateWithOpenAI({ productBytes, productContentType, prompt, widestRatio, quality }: GenerationArgs): Promise<Generation> {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) throw new Error('generate_ad_image: OPENAI_API_KEY is not set (required when AD_IMAGE_PROVIDER=openai, the default)')
+  const model = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1'
+
+  const nativeSize = OPENAI_NATIVE_SIZES.reduce((best, size) => {
+    const bestDiff = Math.abs(best.width / best.height - widestRatio)
+    const diff = Math.abs(size.width / size.height - widestRatio)
+    return diff < bestDiff ? size : best
+  })
+
+  const form = new FormData()
+  form.set('model', model)
+  form.set('prompt', prompt)
+  form.set('size', `${nativeSize.width}x${nativeSize.height}`)
+  form.set('quality', quality)
+  form.set('image', new Blob([productBytes], { type: productContentType }), 'product')
+
+  const res = await fetch('https://api.openai.com/v1/images/edits', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`generate_ad_image: OpenAI image edit failed (HTTP ${res.status}) ${detail.slice(0, 300)}`)
+  }
+  const body = (await res.json()) as { data?: { b64_json?: string }[] }
+  const b64 = body.data?.[0]?.b64_json
+  if (!b64) throw new Error('generate_ad_image: OpenAI response carried no image data')
+
+  return { buffer: Buffer.from(b64, 'base64'), width: nativeSize.width, height: nativeSize.height }
+}
+
+// Google's Gemini image models ("Nano Banana") — gemini-3.1-flash-image
+// (Nano Banana 2) and gemini-3-pro-image (Nano Banana Pro) — support a
+// real aspect_ratio parameter with a fixed set of presets, unlike
+// OpenAI's three pixel sizes. Square and both portrait specs (4:5, 9:16)
+// are exact presets here — no crop needed at all for those; only
+// landscape 1.91:1 isn't itself a preset, so 16:9 (the closest) still
+// gets a small trim afterward, same reasoning as the OpenAI path.
+const GOOGLE_ASPECT_PRESETS = ['1:1', '16:9', '9:16', '3:2', '2:3', '3:4', '4:3', '4:5', '5:4', '21:9']
+
+function nearestGooglePreset(targetRatio: number): string {
+  return GOOGLE_ASPECT_PRESETS.reduce((best, preset) => {
+    const bestDiff = Math.abs(parseAspectRatio(best) - targetRatio)
+    const diff = Math.abs(parseAspectRatio(preset) - targetRatio)
+    return diff < bestDiff ? preset : best
+  })
+}
+
+// Walks the Interactions API's steps[].content[] shape for the first
+// image content block, rather than assuming a fixed index — a response
+// can interleave text/image blocks, and which position the image lands
+// in isn't a contract worth hardcoding against.
+function findImageData(body: unknown): string | undefined {
+  if (!body || typeof body !== 'object') return undefined
+  for (const value of Object.values(body as Record<string, unknown>)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item && typeof item === 'object') {
+          const obj = item as Record<string, unknown>
+          if (obj.type === 'image' && typeof obj.data === 'string') return obj.data
+          const nested = findImageData(obj)
+          if (nested) return nested
+        }
+      }
+    } else if (value && typeof value === 'object') {
+      const nested = findImageData(value)
+      if (nested) return nested
+    }
+  }
+  return undefined
+}
+
+async function generateWithGoogle({ productBytes, productContentType, prompt, widestRatio, quality }: GenerationArgs): Promise<Generation> {
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) throw new Error('generate_ad_image: GEMINI_API_KEY is not set (required when AD_IMAGE_PROVIDER=google)')
+  const model = process.env.GOOGLE_IMAGE_MODEL || 'gemini-3.1-flash-image' // Nano Banana 2; set to gemini-3-pro-image for Nano Banana Pro
+
+  const aspectRatio = nearestGooglePreset(widestRatio)
+  const imageSize = quality === 'high' ? '2K' : '1K'
+
+  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+    method: 'POST',
+    headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      input: [
+        { type: 'text', text: prompt },
+        { type: 'image', mime_type: productContentType, data: productBytes.toString('base64') },
+      ],
+      response_format: { type: 'image', mime_type: 'image/png', aspect_ratio: aspectRatio, image_size: imageSize },
+    }),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`generate_ad_image: Google image edit failed (HTTP ${res.status}) ${detail.slice(0, 300)}`)
+  }
+  const body: unknown = await res.json()
+  const b64 = findImageData(body)
+  if (!b64) throw new Error('generate_ad_image: Google response carried no image data')
+
+  const buffer = Buffer.from(b64, 'base64')
+  // Read real dimensions off the actual bytes rather than assuming what
+  // a given aspect_ratio+image_size pair produces — the crop step below
+  // needs the truth, not a guess.
+  const meta = await sharp(buffer).metadata()
+  if (!meta.width || !meta.height) throw new Error('generate_ad_image: could not read generated image dimensions')
+
+  return { buffer, width: meta.width, height: meta.height }
 }
 
 export const generateAdImage: ToolDefinition = {
@@ -127,10 +245,16 @@ export const generateAdImage: ToolDefinition = {
     required: ['product_image_url', 'shot_type', 'scene_prompt'],
   },
   execute: async (input) => {
-    const apiKey = process.env.OPENAI_API_KEY
-    if (!apiKey) throw new Error('generate_ad_image: OPENAI_API_KEY is not set')
-    const model = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1'
     const outputDir = process.env.AD_IMAGE_OUTPUT_DIR || './generated/ad-images'
+    // Which model actually does the generation — OpenAI's gpt-image-*
+    // (default) or Google's Nano Banana 2 / Nano Banana Pro. This is a
+    // deployment-wide choice, not a per-call one: set once via env, not
+    // exposed as a tool argument, since an operator picks a provider for
+    // cost/quality/quota reasons that don't vary shot to shot.
+    const provider = process.env.AD_IMAGE_PROVIDER || 'openai'
+    if (provider !== 'openai' && provider !== 'google') {
+      throw new Error(`generate_ad_image: AD_IMAGE_PROVIDER must be "openai" or "google" — got "${provider}"`)
+    }
 
     const productImageUrl = String(input.product_image_url)
     const shotType = String(input.shot_type) as ShotType
@@ -150,34 +274,14 @@ export const generateAdImage: ToolDefinition = {
 
     const prompt = `${SHOT_TYPE_PREFIX[shotType]}\n\nScene: ${scenePrompt}`
 
-    // A wider native source can always yield a narrower crop, never the
-    // reverse — so the shared source for this whole call is whichever
-    // native size fits the *widest* of the requested ratios; every
-    // other requested ratio crops down from that same single generation.
+    // A wider source can always yield a narrower crop, never the
+    // reverse — so the shared generation for this whole call targets
+    // whichever the *widest* of the requested ratios is; every other
+    // requested ratio crops down from that same single generation.
     const widestRatio = Math.max(...targetRatios)
-    const nativeSize = nearestNativeSize(widestRatio)
+    const generate = provider === 'google' ? generateWithGoogle : generateWithOpenAI
+    const generation = await generate({ productBytes, productContentType, prompt, widestRatio, quality })
 
-    const form = new FormData()
-    form.set('model', model)
-    form.set('prompt', prompt)
-    form.set('size', `${nativeSize.width}x${nativeSize.height}`)
-    form.set('quality', quality)
-    form.set('image', new Blob([productBytes], { type: productContentType }), 'product')
-
-    const editRes = await fetch('https://api.openai.com/v1/images/edits', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: form,
-    })
-    if (!editRes.ok) {
-      const detail = await editRes.text().catch(() => '')
-      throw new Error(`generate_ad_image: OpenAI image edit failed (HTTP ${editRes.status}) ${detail.slice(0, 300)}`)
-    }
-    const editBody = (await editRes.json()) as { data?: { b64_json?: string }[] }
-    const b64 = editBody.data?.[0]?.b64_json
-    if (!b64) throw new Error('generate_ad_image: OpenAI response carried no image data')
-
-    const generated = Buffer.from(b64, 'base64')
     await mkdir(outputDir, { recursive: true })
 
     // One shared timestamp + slug for the whole call, disambiguated per
@@ -189,8 +293,8 @@ export const generateAdImage: ToolDefinition = {
     const outputs = []
     for (const [i, targetRatio] of targetRatios.entries()) {
       const aspectRatioSpec = aspectRatioSpecs[i]
-      const crop = cropRectFor(targetRatio, nativeSize)
-      const cropped = await sharp(generated).extract(crop).png().toBuffer()
+      const crop = cropRectFor(targetRatio, generation)
+      const cropped = await sharp(generation.buffer).extract(crop).png().toBuffer()
 
       const filename = `${stamp}-${shotType}-${sceneSlug}-${ratioLabel(aspectRatioSpec)}.png`
       const outputPath = join(outputDir, filename)

@@ -4,8 +4,11 @@
   "skills": ["skills/product-ad-images"],
   "actauth": "actauth/rules.yml",
   "env": [
-    { "name": "OPENAI_API_KEY", "description": "OpenAI API key — used to call the images/edits endpoint.", "secret": true },
-    { "name": "OPENAI_IMAGE_MODEL", "description": "Which OpenAI image model to call (e.g. gpt-image-1, or a newer one your account has access to). Defaults to gpt-image-1 if unset.", "secret": false },
+    { "name": "AD_IMAGE_PROVIDER", "description": "Which image model actually generates: \"openai\" (default) or \"google\" (Nano Banana 2 / Nano Banana Pro). Only one provider's API key below is required, matching whichever you pick.", "secret": false },
+    { "name": "OPENAI_API_KEY", "description": "OpenAI API key — required when AD_IMAGE_PROVIDER=openai (the default).", "secret": true },
+    { "name": "OPENAI_IMAGE_MODEL", "description": "Which OpenAI image model to call. Defaults to gpt-image-1 if unset.", "secret": false },
+    { "name": "GEMINI_API_KEY", "description": "Google AI Studio / Gemini API key — required when AD_IMAGE_PROVIDER=google.", "secret": true },
+    { "name": "GOOGLE_IMAGE_MODEL", "description": "Which Gemini image model to call when AD_IMAGE_PROVIDER=google: gemini-3.1-flash-image (Nano Banana 2, the default) or gemini-3-pro-image (Nano Banana Pro, higher quality and cost).", "secret": false },
     { "name": "AD_IMAGE_OUTPUT_DIR", "description": "Where generated images are written on disk. Defaults to ./generated/ad-images if unset.", "secret": false }
   ]
 }
