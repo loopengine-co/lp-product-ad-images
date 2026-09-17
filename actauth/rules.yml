@@ -1,25 +1,25 @@
 # decision: allow, not ask — deliberately, and worth being explicit about
 # why. This tool has no destructive real-world side effect the way
 # issue_refund/send_email do (see loopengine's own ABILITIES.md on
-# cost-vs-danger gating); the actual risk is pure API spend, and the
-# entire point of this ability is generating a full 18-20 image batch in
-# one agent run. Gating every call behind an individual human approval
-# would mean 18-20 separate approvals per batch, defeating that.
+# cost-vs-danger gating); the actual risk is pure API spend, and one call
+# can already cover a full 18-20+ shot batch (one job, many shots) —
+# gating it behind human approval would mean approving the whole batch's
+# cost up front in one shot anyway, not per-image, so "ask" here doesn't
+# buy finer-grained control the way it might look like it would.
 #
 # If you want a cost ceiling instead, the two real options: change this
-# rule's decision to "ask" (trades bulk-generation convenience for a
-# per-image approval), or don't grant this tool at all and generate in
-# smaller, human-supervised batches by calling it from outside a single
-# unattended run.
-- name: generate-google-ad-image-allowed
+# rule's decision to "ask" (one approval per batch, not per image), or
+# don't grant this tool at all and generate in smaller, human-supervised
+# batches by calling it from outside a single unattended run.
+- name: generate-google-ad-images-allowed
   scope: "*/*"
-  tool: generate_google_ad_image
+  tool: generate_google_ad_images
   decision: allow
 
 # Read-only status check on a job the rule above already allowed
 # starting — gating this one too would mean approving twice for the same
 # generation (once to start it, once to see if it's done).
-- name: check-google-ad-image-job-allowed
+- name: check-google-ad-images-job-allowed
   scope: "*/*"
   tool: check_google_ad_image_job
   decision: allow

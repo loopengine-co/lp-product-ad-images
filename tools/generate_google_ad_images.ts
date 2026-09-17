@@ -6,24 +6,45 @@ import type { ToolDefinition } from 'loopengine'
 
 type ShotType = 'product_only' | 'lifestyle_product' | 'cover_lifestyle'
 
-interface JobResult {
-  // A local filesystem path (default, AD_IMAGE_STORAGE=local), or a
-  // gs://bucket/object URI when AD_IMAGE_STORAGE=gcs.
-  path: string
+interface ShotSpec {
+  shotType: ShotType
+  scenePrompt: string
+  aspectRatioSpecs: string[]
+  targetRatios: number[]
+}
+
+interface UnitResult {
+  shot_index: number
   shot_type: ShotType
   aspect_ratio: string
-  width: number
-  height: number
+  status: 'done' | 'failed'
+  // A local filesystem path (default, AD_IMAGE_STORAGE=local), or a
+  // gs://bucket/object URI when AD_IMAGE_STORAGE=gcs. Present only when
+  // status is "done".
+  path?: string
+  width?: number
+  height?: number
+  error?: string
 }
 
 interface JobRecord {
   job_id: string
-  status: 'processing' | 'done' | 'failed'
+  // "processing" until every unit (one shot × one of its aspect_ratios)
+  // has settled. "done" only if every unit succeeded, "failed" only if
+  // every unit failed, "partial" if it's a mix — a batch of 30+
+  // independent generations WILL sometimes have a handful fail without
+  // the rest being any less usable, so collapsing that into a binary
+  // done/failed would either hide real failures or throw away good
+  // images.
+  status: 'processing' | 'done' | 'partial' | 'failed'
   created_at: string
   finished_at?: string
-  request: { shot_type: ShotType; aspect_ratios: string[] }
-  result?: JobResult[]
-  error?: string
+  progress: { total: number; done: number; failed: number; processing: number }
+  // Grows incrementally as each unit finishes — a caller polling mid-run
+  // already sees every unit that's settled so far, not just a bare
+  // "processing" flag with no visibility for however many minutes a big
+  // batch takes.
+  results: UnitResult[]
 }
 
 // Job files live alongside the images themselves, under the same
@@ -47,10 +68,10 @@ async function writeJob(outputDir: string, record: JobRecord): Promise<void> {
 function validateStorageConfig(): void {
   const storage = process.env.AD_IMAGE_STORAGE || 'local'
   if (storage !== 'local' && storage !== 'gcs') {
-    throw new Error(`generate_google_ad_image: AD_IMAGE_STORAGE must be "local" or "gcs" — got "${storage}"`)
+    throw new Error(`generate_google_ad_images: AD_IMAGE_STORAGE must be "local" or "gcs" — got "${storage}"`)
   }
   if (storage === 'gcs' && !process.env.AD_IMAGE_GCS_BUCKET) {
-    throw new Error('generate_google_ad_image: AD_IMAGE_GCS_BUCKET is not set (required when AD_IMAGE_STORAGE=gcs)')
+    throw new Error('generate_google_ad_images: AD_IMAGE_GCS_BUCKET is not set (required when AD_IMAGE_STORAGE=gcs)')
   }
 }
 
@@ -78,7 +99,7 @@ async function saveImage(args: { buffer: Buffer; filename: string; outputDir: st
       gcs = await import(gcsModuleName)
     } catch {
       throw new Error(
-        'generate_google_ad_image: AD_IMAGE_STORAGE=gcs requires the @google-cloud/storage package — npm install @google-cloud/storage in your own project.',
+        'generate_google_ad_images: AD_IMAGE_STORAGE=gcs requires the @google-cloud/storage package — npm install @google-cloud/storage in your own project.',
       )
     }
     const client = new gcs.Storage()
@@ -108,10 +129,10 @@ const SHOT_TYPE_PREFIX: Record<ShotType, string> = {
 
 function parseAspectRatio(spec: string): number {
   const match = spec.match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/)
-  if (!match) throw new Error(`generate_google_ad_image: aspect_ratio must look like "1.91:1" — got "${spec}"`)
+  if (!match) throw new Error(`generate_google_ad_images: aspect_ratio must look like "1.91:1" — got "${spec}"`)
   const w = Number(match[1])
   const h = Number(match[2])
-  if (w <= 0 || h <= 0) throw new Error(`generate_google_ad_image: aspect_ratio must be positive — got "${spec}"`)
+  if (w <= 0 || h <= 0) throw new Error(`generate_google_ad_images: aspect_ratio must be positive — got "${spec}"`)
   return w / h
 }
 
@@ -186,7 +207,7 @@ const OPENAI_NATIVE_SIZES = [
 
 async function generateWithOpenAI({ productBytes, productContentType, prompt, targetRatio, quality }: GenerationArgs): Promise<Generation> {
   const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) throw new Error('generate_google_ad_image: OPENAI_API_KEY is not set (required when AD_IMAGE_PROVIDER=openai, the default)')
+  if (!apiKey) throw new Error('generate_google_ad_images: OPENAI_API_KEY is not set (required when AD_IMAGE_PROVIDER=openai, the default)')
   const model = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1'
 
   const nativeSize = OPENAI_NATIVE_SIZES.reduce((best, size) => {
@@ -209,11 +230,11 @@ async function generateWithOpenAI({ productBytes, productContentType, prompt, ta
   })
   if (!res.ok) {
     const detail = await res.text().catch(() => '')
-    throw new Error(`generate_google_ad_image: OpenAI image edit failed (HTTP ${res.status}) ${detail.slice(0, 300)}`)
+    throw new Error(`generate_google_ad_images: OpenAI image edit failed (HTTP ${res.status}) ${detail.slice(0, 300)}`)
   }
   const body = (await res.json()) as { data?: { b64_json?: string }[] }
   const b64 = body.data?.[0]?.b64_json
-  if (!b64) throw new Error('generate_google_ad_image: OpenAI response carried no image data')
+  if (!b64) throw new Error('generate_google_ad_images: OpenAI response carried no image data')
 
   return { buffer: Buffer.from(b64, 'base64'), width: nativeSize.width, height: nativeSize.height }
 }
@@ -262,7 +283,7 @@ function findImageData(body: unknown): string | undefined {
 
 async function generateWithGoogle({ productBytes, productContentType, prompt, targetRatio, quality }: GenerationArgs): Promise<Generation> {
   const apiKey = process.env.GEMINI_API_KEY
-  if (!apiKey) throw new Error('generate_google_ad_image: GEMINI_API_KEY is not set (required when AD_IMAGE_PROVIDER=google)')
+  if (!apiKey) throw new Error('generate_google_ad_images: GEMINI_API_KEY is not set (required when AD_IMAGE_PROVIDER=google)')
   const model = process.env.GOOGLE_IMAGE_MODEL || 'gemini-3.1-flash-image' // Nano Banana 2; set to gemini-3-pro-image for Nano Banana Pro
 
   const aspectRatio = nearestGooglePreset(targetRatio)
@@ -282,136 +303,222 @@ async function generateWithGoogle({ productBytes, productContentType, prompt, ta
   })
   if (!res.ok) {
     const detail = await res.text().catch(() => '')
-    throw new Error(`generate_google_ad_image: Google image edit failed (HTTP ${res.status}) ${detail.slice(0, 300)}`)
+    throw new Error(`generate_google_ad_images: Google image edit failed (HTTP ${res.status}) ${detail.slice(0, 300)}`)
   }
   const body: unknown = await res.json()
   const b64 = findImageData(body)
-  if (!b64) throw new Error('generate_google_ad_image: Google response carried no image data')
+  if (!b64) throw new Error('generate_google_ad_images: Google response carried no image data')
 
   const buffer = Buffer.from(b64, 'base64')
   // Read real dimensions off the actual bytes rather than assuming what
   // a given aspect_ratio+image_size pair produces — the crop step below
   // needs the truth, not a guess.
   const meta = await sharp(buffer).metadata()
-  if (!meta.width || !meta.height) throw new Error('generate_google_ad_image: could not read generated image dimensions')
+  if (!meta.width || !meta.height) throw new Error('generate_google_ad_images: could not read generated image dimensions')
 
   return { buffer, width: meta.width, height: meta.height }
 }
 
-// The actual work — fetching the product photo, the real provider call,
-// cropping, writing files — all happens here, after generate_google_ad_image
-// has already returned a job_id to the caller. A single high-quality
-// generation can take up to a minute or more; running it in the
-// background instead of blocking the tool call means the caller (and
-// whichever agent turn is waiting on it) isn't stuck for that whole
-// time, and a batch of many shots can all be in flight at once instead
-// of strictly serialized behind each other's generation time.
+interface WorkUnit {
+  shotIndex: number
+  shotType: ShotType
+  scenePrompt: string
+  aspectRatioSpec: string
+  targetRatio: number
+}
+
+// Runs `items` through `worker`, at most `limit` concurrently — a plain
+// `Promise.all` over every unit in a 30+ shot batch would fire that many
+// simultaneous provider calls at once and likely trip rate limits;
+// this instead keeps `limit` workers alive, each pulling the next
+// not-yet-started item off the shared list until it's exhausted.
+async function runWithConcurrency<T>(items: T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
+  let next = 0
+  async function runOne(): Promise<void> {
+    while (next < items.length) {
+      const item = items[next++]
+      await worker(item)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, runOne))
+}
+
+// The actual work — fetching the product photo once, then every shot's
+// every requested ratio as its own independent generation — all happens
+// here, after generate_google_ad_images has already returned a job_id to
+// the caller. Progress is persisted after each unit settles (not just
+// once at the very end), so a caller polling mid-run sees real partial
+// results instead of a bare "processing" flag for however long the
+// whole batch takes.
 async function runJob(args: {
   jobId: string
   outputDir: string
   provider: string
   productImageUrl: string
-  shotType: ShotType
-  scenePrompt: string
-  aspectRatioSpecs: string[]
-  targetRatios: number[]
+  shots: ShotSpec[]
   quality: string
+  concurrency: number
   createdAt: string
 }): Promise<void> {
-  const { jobId, outputDir, provider, productImageUrl, shotType, scenePrompt, aspectRatioSpecs, targetRatios, quality, createdAt } = args
-  const request = { shot_type: shotType, aspect_ratios: aspectRatioSpecs }
+  const { jobId, outputDir, provider, productImageUrl, shots, quality, concurrency, createdAt } = args
+
+  const results: UnitResult[] = []
+  const progress = { total: 0, done: 0, failed: 0, processing: 0 }
+  for (const shot of shots) progress.total += shot.aspectRatioSpecs.length
+  progress.processing = progress.total
+
+  // Writes are chained (not fired independently) so two units finishing
+  // close together can't race and leave the file with an earlier,
+  // less-complete snapshot overwriting a later one — each chained write
+  // reads `results`/`progress` fresh at the moment it actually runs, by
+  // which point every synchronous push that happened before it in
+  // program order is already reflected.
+  let writeChain: Promise<void> = Promise.resolve()
+  function persist(finished: boolean): void {
+    writeChain = writeChain.then(() =>
+      writeJob(outputDir, {
+        job_id: jobId,
+        status: !finished
+          ? 'processing'
+          : progress.failed === 0
+            ? 'done'
+            : progress.done === 0
+              ? 'failed'
+              : 'partial',
+        created_at: createdAt,
+        finished_at: finished ? new Date().toISOString() : undefined,
+        progress: { ...progress },
+        results: [...results],
+      }),
+    )
+  }
+
+  let productBytes: Buffer
+  let productContentType: string
   try {
     const productRes = await fetch(productImageUrl)
     if (!productRes.ok) throw new Error(`could not fetch product_image_url (HTTP ${productRes.status})`)
-    const productBytes = Buffer.from(await productRes.arrayBuffer())
-    const productContentType = productRes.headers.get('content-type') || 'image/png'
+    productBytes = Buffer.from(await productRes.arrayBuffer())
+    productContentType = productRes.headers.get('content-type') || 'image/png'
+  } catch (err) {
+    // The product photo is shared by every unit — if it can't be
+    // fetched at all, every unit fails identically rather than each
+    // independently re-attempting (and re-failing) the same fetch.
+    const message = err instanceof Error ? err.message : String(err)
+    shots.forEach((shot, shotIndex) => {
+      for (const aspectRatioSpec of shot.aspectRatioSpecs) {
+        results.push({ shot_index: shotIndex, shot_type: shot.shotType, aspect_ratio: aspectRatioSpec, status: 'failed', error: message })
+        progress.failed++
+        progress.processing--
+      }
+    })
+    persist(true)
+    await writeChain
+    return
+  }
 
-    const prompt = `${SHOT_TYPE_PREFIX[shotType]}\n\nScene: ${scenePrompt}`
+  const generate = provider === 'google' ? generateWithGoogle : generateWithOpenAI
+  const stamp = Date.now()
 
-    // Every requested ratio is its own independent, separately generated
-    // photo — never one shared generation cropped down to the rest —
-    // so two ratios from the same call can drift in composition,
-    // lighting, even framing, same as two separate calls would. Run
-    // them concurrently rather than one after another purely for
-    // latency: they're unrelated generations, nothing to serialize on.
-    const generate = provider === 'google' ? generateWithGoogle : generateWithOpenAI
-    const generations = await Promise.all(targetRatios.map((targetRatio) => generate({ productBytes, productContentType, prompt, targetRatio, quality })))
+  const units: WorkUnit[] = []
+  shots.forEach((shot, shotIndex) => {
+    shot.aspectRatioSpecs.forEach((aspectRatioSpec, i) => {
+      units.push({ shotIndex, shotType: shot.shotType, scenePrompt: shot.scenePrompt, aspectRatioSpec, targetRatio: shot.targetRatios[i] })
+    })
+  })
 
-    // One shared timestamp + slug for the whole call, disambiguated per
-    // ratio — these files are siblings from the same call, and should
-    // sort/group together wherever they land even though each is its
-    // own generation.
-    const stamp = Date.now()
-    const sceneSlug = slugify(scenePrompt) || 'shot'
-
-    const outputs: JobResult[] = []
-    for (const [i, targetRatio] of targetRatios.entries()) {
-      const aspectRatioSpec = aspectRatioSpecs[i]
-      const generation = generations[i]
+  await runWithConcurrency(units, concurrency, async (unit) => {
+    try {
+      const prompt = `${SHOT_TYPE_PREFIX[unit.shotType]}\n\nScene: ${unit.scenePrompt}`
+      const generation = await generate({ productBytes, productContentType, prompt, targetRatio: unit.targetRatio, quality })
       // Still a crop, not a resize — the provider's native size/preset
       // for this ratio is rarely pixel-exact (e.g. 1.91:1 has no native
       // OpenAI size and no Google preset), so this trims the small
       // remainder rather than stretching or padding.
-      const crop = cropRectFor(targetRatio, generation)
+      const crop = cropRectFor(unit.targetRatio, generation)
       const cropped = await sharp(generation.buffer).extract(crop).png().toBuffer()
 
-      const filename = `${stamp}-${shotType}-${sceneSlug}-${ratioLabel(aspectRatioSpec)}.png`
+      const sceneSlug = slugify(unit.scenePrompt) || 'shot'
+      const filename = `${stamp}-shot${unit.shotIndex}-${unit.shotType}-${sceneSlug}-${ratioLabel(unit.aspectRatioSpec)}.png`
       const path = await saveImage({ buffer: cropped, filename, outputDir })
 
-      outputs.push({ path, shot_type: shotType, aspect_ratio: aspectRatioSpec, width: crop.width, height: crop.height })
+      results.push({
+        shot_index: unit.shotIndex,
+        shot_type: unit.shotType,
+        aspect_ratio: unit.aspectRatioSpec,
+        status: 'done',
+        path,
+        width: crop.width,
+        height: crop.height,
+      })
+      progress.done++
+    } catch (err) {
+      results.push({
+        shot_index: unit.shotIndex,
+        shot_type: unit.shotType,
+        aspect_ratio: unit.aspectRatioSpec,
+        status: 'failed',
+        error: err instanceof Error ? err.message : String(err),
+      })
+      progress.failed++
+    } finally {
+      progress.processing--
+      persist(progress.processing === 0)
     }
+  })
 
-    await writeJob(outputDir, { job_id: jobId, status: 'done', created_at: createdAt, finished_at: new Date().toISOString(), request, result: outputs })
-  } catch (err) {
-    // Best-effort: if even writing the failure record fails (e.g. the
-    // output dir was removed mid-run), there's nothing further to do —
-    // check_google_ad_image_job will just report the job as not found.
-    await writeJob(outputDir, {
-      job_id: jobId,
-      status: 'failed',
-      created_at: createdAt,
-      finished_at: new Date().toISOString(),
-      request,
-      error: err instanceof Error ? err.message : String(err),
-    }).catch(() => {})
-  }
+  // Best-effort: if even the final write fails (e.g. the output dir was
+  // removed mid-run), there's nothing further to do —
+  // check_google_ad_image_job will just report the job as not found.
+  await writeChain.catch(() => {})
 }
 
-export const generateGoogleAdImage: ToolDefinition = {
-  name: 'generate_google_ad_image',
+export const generateGoogleAdImages: ToolDefinition = {
+  name: 'generate_google_ad_images',
   description:
-    'Start one photo shoot against the real product photo, for one or more Google Ads aspect ratios. Each ratio in aspect_ratios is its own independent, separately generated image-edit call — not cropped from a shared source — so passing several here is purely a convenience (one job_id covers all of them) not a cost or consistency shortcut; two ratios from one call can still come out with different composition/lighting, same as two separate calls would. Returns immediately with a job_id and status "processing" instead of blocking until every image is ready (a single generation can take up to a minute or more); poll check_google_ad_image_job with that job_id for the result.',
+    'Start a whole batch of Google Ads product photo shoots — one or more shots, each with its own shot_type/scene_prompt/aspect_ratios — as ONE job covering the entire request, not one job per shot. Every (shot, ratio) pair is its own independent, separately generated image-edit call, run with bounded concurrency in the background. Returns immediately with a job_id and status "processing"; poll check_google_ad_image_job with that job_id for progress and results — it fills in incrementally as each shot finishes, so a big batch is never a black box mid-run. For a single image, pass one shot with one ratio.',
   input_schema: {
     type: 'object',
     properties: {
       product_image_url: {
         type: 'string',
-        description: 'Publicly reachable URL of the real product photo to base this shot on.',
+        description: 'Publicly reachable URL of the real product photo every shot in this batch is based on.',
       },
-      shot_type: {
-        type: 'string',
-        enum: ['product_only', 'lifestyle_product', 'cover_lifestyle'],
-        description:
-          'product_only: clean product-alone shot. lifestyle_product: product shown in realistic use. cover_lifestyle: aspirational hero/cover shot, product present but not the sole focus.',
-      },
-      scene_prompt: {
-        type: 'string',
-        description:
-          'The specific setting, styling, mood, and composition for this one shot (e.g. "on a rustic wooden table with soft morning light, a coffee cup beside it"). Describe the scene only — do not restate what the product looks like, the reference photo already establishes that.',
-      },
-      aspect_ratios: {
+      shots: {
         type: 'array',
-        items: { type: 'string' },
-        description:
-          'One or more target ratios as "W:H", each generated independently (its own real, separately metered provider call) — not cropped from a shared source. Default ["1.91:1"]. Google Ads\' three standard formats: "1.91:1" (landscape), "1:1" (square), "4:5" or "9:16" (portrait).',
+        minItems: 1,
+        items: {
+          type: 'object',
+          properties: {
+            shot_type: {
+              type: 'string',
+              enum: ['product_only', 'lifestyle_product', 'cover_lifestyle'],
+              description:
+                'product_only: clean product-alone shot. lifestyle_product: product shown in realistic use. cover_lifestyle: aspirational hero/cover shot, product present but not the sole focus.',
+            },
+            scene_prompt: {
+              type: 'string',
+              description:
+                'The specific setting, styling, mood, and composition for this one shot (e.g. "on a rustic wooden table with soft morning light, a coffee cup beside it"). Describe the scene only — do not restate what the product looks like, the reference photo already establishes that.',
+            },
+            aspect_ratios: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'One or more target ratios as "W:H" for this shot, each generated independently — not cropped from a shared source. Default ["1.91:1"]. Google Ads\' three standard formats: "1.91:1" (landscape), "1:1" (square), "4:5" or "9:16" (portrait).',
+            },
+          },
+          required: ['shot_type', 'scene_prompt'],
+        },
+        description: 'The full shot list for this batch — one entry per shot. A single-image request is just one entry.',
       },
       quality: {
         type: 'string',
         enum: ['low', 'medium', 'high'],
-        description: 'Generation quality, also the main cost lever — default "high" for ad-ready output.',
+        description: 'Generation quality, also the main cost lever, applied to every shot in this batch — default "high" for ad-ready output.',
       },
     },
-    required: ['product_image_url', 'shot_type', 'scene_prompt'],
+    required: ['product_image_url', 'shots'],
   },
   execute: async (input) => {
     const outputDir = process.env.AD_IMAGE_OUTPUT_DIR || './generated/ad-images'
@@ -422,41 +529,55 @@ export const generateGoogleAdImage: ToolDefinition = {
     // cost/quality/quota reasons that don't vary shot to shot.
     const provider = process.env.AD_IMAGE_PROVIDER || 'openai'
     if (provider !== 'openai' && provider !== 'google') {
-      throw new Error(`generate_google_ad_image: AD_IMAGE_PROVIDER must be "openai" or "google" — got "${provider}"`)
+      throw new Error(`generate_google_ad_images: AD_IMAGE_PROVIDER must be "openai" or "google" — got "${provider}"`)
     }
     validateStorageConfig()
 
+    const concurrencyRaw = Number(process.env.AD_IMAGE_CONCURRENCY || '4')
+    const concurrency = Number.isFinite(concurrencyRaw) && concurrencyRaw > 0 ? Math.floor(concurrencyRaw) : 4
+
     const productImageUrl = String(input.product_image_url)
-    const shotType = String(input.shot_type) as ShotType
-    if (!(shotType in SHOT_TYPE_PREFIX)) {
-      throw new Error(`generate_google_ad_image: shot_type must be one of ${Object.keys(SHOT_TYPE_PREFIX).join(', ')} — got "${shotType}"`)
-    }
-    const scenePrompt = String(input.scene_prompt)
-    const aspectRatioSpecs =
-      Array.isArray(input.aspect_ratios) && input.aspect_ratios.length > 0 ? input.aspect_ratios.map(String) : ['1.91:1']
-    const targetRatios = aspectRatioSpecs.map(parseAspectRatio)
+    const shotsInput = Array.isArray(input.shots) ? input.shots : []
+    if (shotsInput.length === 0) throw new Error('generate_google_ad_images: shots must be a non-empty array')
+
+    const shots: ShotSpec[] = shotsInput.map((raw, i) => {
+      const shotObj = (raw ?? {}) as Record<string, unknown>
+      const shotType = String(shotObj.shot_type) as ShotType
+      if (!(shotType in SHOT_TYPE_PREFIX)) {
+        throw new Error(`generate_google_ad_images: shots[${i}].shot_type must be one of ${Object.keys(SHOT_TYPE_PREFIX).join(', ')} — got "${shotType}"`)
+      }
+      if (typeof shotObj.scene_prompt !== 'string' || !shotObj.scene_prompt) {
+        throw new Error(`generate_google_ad_images: shots[${i}].scene_prompt is required`)
+      }
+      const aspectRatioSpecs =
+        Array.isArray(shotObj.aspect_ratios) && shotObj.aspect_ratios.length > 0 ? shotObj.aspect_ratios.map(String) : ['1.91:1']
+      const targetRatios = aspectRatioSpecs.map(parseAspectRatio) // throws synchronously on a bad ratio spec, at any shot index
+      return { shotType, scenePrompt: shotObj.scene_prompt, aspectRatioSpecs, targetRatios }
+    })
     const quality = typeof input.quality === 'string' && input.quality ? input.quality : 'high'
 
     const jobId = randomUUID()
     const createdAt = new Date().toISOString()
+    const total = shots.reduce((n, shot) => n + shot.aspectRatioSpecs.length, 0)
     await writeJob(outputDir, {
       job_id: jobId,
       status: 'processing',
       created_at: createdAt,
-      request: { shot_type: shotType, aspect_ratios: aspectRatioSpecs },
+      progress: { total, done: 0, failed: 0, processing: total },
+      results: [],
     })
 
     // Not awaited — see runJob's own comment for why. Errors inside it
-    // are caught there and written into the job record itself, never
+    // are caught per-unit and written into the job record itself, never
     // thrown here, since by this point the caller has already moved on.
-    void runJob({ jobId, outputDir, provider, productImageUrl, shotType, scenePrompt, aspectRatioSpecs, targetRatios, quality, createdAt })
+    void runJob({ jobId, outputDir, provider, productImageUrl, shots, quality, concurrency, createdAt })
 
     return JSON.stringify({ job_id: jobId, status: 'processing' })
   },
   // Each call is independent — writes its own uniquely-named job file
-  // and (once the background run finishes) image file(s), reads nothing
-  // shared, no risk of two calls conflicting — so it's fine in
-  // ToolLane's parallel lane despite not being "read-only" in the usual
-  // sense that flag is for.
+  // and (once each unit's background work finishes) image file(s),
+  // reads nothing shared, no risk of two calls conflicting — so it's
+  // fine in ToolLane's parallel lane despite not being "read-only" in
+  // the usual sense that flag is for.
   safe: true,
 }

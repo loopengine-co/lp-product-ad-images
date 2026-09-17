@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ToolDefinition } from 'loopengine'
 
-// Mirrors generate_google_ad_image.ts's own jobPath — the two tools
+// Mirrors generate_google_ad_images.ts's own jobPath — the two tools
 // can't share a module (add-ability copies each tool file standalone,
 // flattened, with no shared-module support), so this on-disk path
 // convention is the actual contract between them, not a shared function.
@@ -13,13 +13,13 @@ function jobPath(outputDir: string, jobId: string): string {
 export const checkGoogleAdImageJob: ToolDefinition = {
   name: 'check_google_ad_image_job',
   description:
-    'Check the status of a job started by generate_google_ad_image. Returns {"status":"processing"} while the generation is still running, {"status":"done","result":[...]} with the same result array generate_google_ad_image used to return directly once finished, or {"status":"failed","error":"..."} if the generation itself failed. Poll this instead of assuming a generation finished right away — a single call can take up to a minute or more, longer at high quality.',
+    'Check the status of a job started by generate_google_ad_images — one job covers the whole batch (every shot, every ratio), not just one image. Returns {"status":"processing"|"done"|"partial"|"failed", "progress":{"total","done","failed","processing"}, "results":[...]}. results fills in incrementally as each shot/ratio finishes — check it even while status is still "processing" to see what\'s ready so far. "partial" means some units succeeded and some failed; check each result entry\'s own "status"/"error" to see which. Poll this rather than assuming the batch finished right away — a batch of many shots can take several minutes.',
   input_schema: {
     type: 'object',
     properties: {
       job_id: {
         type: 'string',
-        description: 'The job_id returned by generate_google_ad_image.',
+        description: 'The job_id returned by generate_google_ad_images.',
       },
     },
     required: ['job_id'],
