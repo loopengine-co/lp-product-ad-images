@@ -89,8 +89,8 @@ shots can take several minutes. Poll
   "status": "processing",
   "progress": { "total": 36, "done": 22, "failed": 1, "processing": 13 },
   "results": [
-    { "shot_index": 0, "shot_type": "product_only", "aspect_ratio": "1.91:1", "status": "done", "path": "...", "width": 1536, "height": 804 },
-    { "shot_index": 3, "shot_type": "lifestyle_product", "aspect_ratio": "1:1", "status": "failed", "error": "..." }
+    { "shot_index": 0, "shot_type": "product_only", "aspect_ratio": "1.91:1", "product_image_url": "https://...", "status": "done", "path": "...", "width": 1536, "height": 804 },
+    { "shot_index": 3, "shot_type": "lifestyle_product", "aspect_ratio": "1:1", "product_image_url": "https://...", "status": "failed", "error": "..." }
   ]
 }
 ```
@@ -106,9 +106,10 @@ settles once `progress.processing` hits 0:
   reporting a `"partial"` batch — the images that succeeded are real and
   usable; call out the failed ones by their `error` rather than silently
   dropping them.
-- `"failed"` — every unit failed (most often a dead `product_image_url` or
-  a missing/invalid API key, since that failure applies identically to
-  every shot).
+- `"failed"` — every unit failed (most often a missing/invalid API key, or
+  every shot sharing one dead `product_image_url`). If different shots use
+  different photos, a dead URL only fails the shots that reference it —
+  the rest of the batch settles normally, landing on `"partial"` instead.
 
 This background work only continues for as long as the underlying agent
 process stays running — fine for a long-lived server (`npx loopengine
@@ -117,15 +118,65 @@ CLI invocation exits may never get the chance to finish.
 
 ## Why image-edit, not text-to-image
 
-Every shot is a real edit of the actual `product_image_url` you pass in,
-not a text description of the product. Each shot-type prompt explicitly
-tells the model to keep the product exactly as shown in that reference
-image — same shape, colors, proportions, any printed text or logo. Do
-not try to describe the product yourself in `scene_prompt`; the
-reference image already establishes what it looks like, and repeating a
-text description of it just invites the model to drift from the real
-thing. `scene_prompt` is for the *scene* only: where it is, what's
-around it, the lighting, the mood.
+Every shot is a real edit of an actual product photo, not a text
+description of the product. Each shot-type prompt explicitly tells the
+model to keep the product exactly as shown in that reference image —
+same shape, colors, proportions, any printed text or logo. Do not try
+to describe the product yourself in `scene_prompt`; the reference image
+already establishes what it looks like, and repeating a text
+description of it just invites the model to drift from the real thing.
+`scene_prompt` is for the *scene* only: where it is, what's around it,
+the lighting, the mood.
+
+## Multiple product photos
+
+Most requests only ever hand over one photo — set `product_image_url`
+once at the top level, and every shot uses it by default. When a request
+provides *several* photos of the same product (different angles,
+packaging, already-in-context shots), pick which one fits each shot
+deliberately with that shot's own `product_image_url`, rather than
+reusing one photo for everything or picking randomly:
+
+- A clean product-alone photo (plain background, no hands/props) fits
+  `product_only` shots best.
+- A photo that already shows the product being held or in a real setting
+  fits `lifestyle_product` shots — the model has less reinterpreting to
+  do when the reference is already close to the target composition.
+- Whichever photo best represents the product's overall identity (the
+  one that would work as a listing's main image) is usually the safest
+  default for `cover_lifestyle` shots, unless a more scene-appropriate
+  photo is obviously available.
+
+If it's not obvious from context (filenames, alt text, how the operator
+described each one) which photo is which, ask rather than guessing —
+a mismatched photo/shot pairing (e.g. a boxed/packaging photo used for a
+shot meant to show the product in use) produces a worse result than
+just using the default for every shot. Every `results` entry from
+`check_google_ad_image_job` reports which `product_image_url` it
+actually used, so a mismatch is traceable after the fact too.
+
+**A closely-related collection** (e.g. a "Women's Running Shoes" line
+with several genuinely different models, not just colorways of one shoe)
+is a different case from "one product, several reference photos" above,
+but still belongs in **one job**: Google Ads
+itself normally treats a tightly related collection as a single asset
+group (one theme, one landing page), so one shot list spanning the whole
+collection maps correctly to what actually gets uploaded. What matters
+here is *rotating* which item's photo gets used across the shot list —
+don't let one SKU's photo end up in 90% of the shots with the others
+making a token appearance; spread each item across the `product_only`/
+`lifestyle_product`/`cover_lifestyle` mix roughly evenly so the finished
+set actually represents the whole collection, not mostly one item with
+a few reskins.
+
+**Genuinely unrelated products**, though, don't belong in one job at
+all — different categories, different landing pages, different campaign
+themes. Bundling those together makes the job's aggregate `status`
+useless (a `"partial"` spanning two unrelated products tells you nothing
+about either one individually) and scrambles the "group by format, then
+shot_type" reporting below across products that have nothing to do with
+each other. For that case, call `generate_google_ad_images` once per
+product — separate jobs, separate `job_id`s, separate reports.
 
 ## The three formats
 

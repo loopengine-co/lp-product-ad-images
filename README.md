@@ -9,11 +9,12 @@ plan one shape of batch.
 
 ## What's in it
 
-- **Tool** — `generate_google_ad_images(product_image_url, shots, quality?)`.
+- **Tool** — `generate_google_ad_images(product_image_url?, shots, quality?)`.
   Starts a **whole batch as one job**, not one job per shot: `shots` is
   the full shot list for the request (one entry for a single-image
   request, dozens for a full set), each with its own `shot_type`,
-  `scene_prompt`, and `aspect_ratios`. Returns immediately with
+  `scene_prompt`, `aspect_ratios`, and optionally its own
+  `product_image_url`. Returns immediately with
   `{ job_id, status: "processing" }` instead of blocking until every
   image is ready — a batch of dozens of shots can take several minutes,
   and jobs run with bounded concurrency (`AD_IMAGE_CONCURRENCY`, default
@@ -27,11 +28,13 @@ plan one shape of batch.
     entry has its own `status`/`path`/`error`, so successes and failures
     are both visible per-unit, not collapsed into one job-level verdict.
   - `{ status: "failed", progress, results }` — every unit failed (most
-    often a dead `product_image_url` or bad API key, since that applies
-    identically to every shot).
+    often a bad API key, or every shot sharing one dead
+    `product_image_url`). If different shots reference different photos,
+    a dead URL only fails the shots that use it — the rest of the batch
+    settles normally as `"partial"`.
 
   Each `results` entry is
-  `{ shot_index, shot_type, aspect_ratio, status, path?, width?, height?, error? }`.
+  `{ shot_index, shot_type, aspect_ratio, product_image_url, status, path?, width?, height?, error? }`.
   `path` is where the file actually landed — a local filesystem path
   (`AD_IMAGE_OUTPUT_DIR`, the default) or a `gs://bucket/object` URI
   (`AD_IMAGE_STORAGE=gcs`) — never a URL or inline base64, so a full
@@ -44,6 +47,13 @@ plan one shape of batch.
   - `lifestyle_product` — the product in realistic, plausible use.
   - `cover_lifestyle` — an aspirational hero/cover shot; the product is
     present but the scene carries the mood.
+
+  `product_image_url` can be set once at the top level as the default
+  every shot uses, and/or overridden per shot (`shots[].product_image_url`)
+  when the request provides several photos of the product and different
+  shots should be based on different ones — see the skill for how to pick
+  which photo fits which shot. Each distinct URL is only ever fetched
+  once per job even if many shots reference it, not once per shot.
 
   **Two providers**, chosen once via `AD_IMAGE_PROVIDER` (a deployment
   setting, not a per-call argument):
@@ -89,9 +99,10 @@ plan one shape of batch.
 - **Skill** — `product-google-ad-images`: how to size a request (one
   image, a batch of one format, or a full set) into one `shots` array,
   how to read a job's incremental progress and handle a `partial`
-  result, a suggested shot-type mix, how to write a `scene_prompt` that
-  actually varies shot to shot, and why the tool needs the real product
-  photo rather than a description of it.
+  result, how to pick which photo fits which shot when a request
+  provides more than one, a suggested shot-type mix, how to write a
+  `scene_prompt` that actually varies shot to shot, and why the tool
+  needs the real product photo rather than a description of it.
 - **actauth rules** — `generate-google-ad-images-allowed` and
   `check-google-ad-images-job-allowed`, both `decision: allow`.
   Deliberately not gated behind a human `ask` — see the rule file's own
@@ -231,6 +242,46 @@ landscape+square shots and 12-15 portrait shots, ~30-35 entries total.)
 ```
 `quality` applies to every shot in the batch — there's no per-shot
 override.
+
+**"Generate a batch using these three photos — front, packaging, and
+in-hand — pick whichever fits each shot"**
+
+```json
+{
+  "product_image_url": "https://cdn.example.com/mug-front.png",
+  "shots": [
+    { "shot_type": "product_only", "scene_prompt": "flat lay, marble surface", "aspect_ratios": ["1:1"], "product_image_url": "https://cdn.example.com/mug-front.png" },
+    { "shot_type": "product_only", "scene_prompt": "boxed, on a shipping table", "aspect_ratios": ["1:1"], "product_image_url": "https://cdn.example.com/mug-packaging.png" },
+    { "shot_type": "lifestyle_product", "scene_prompt": "held over a kitchen counter, morning light", "aspect_ratios": ["1:1"], "product_image_url": "https://cdn.example.com/mug-inhand.png" }
+  ]
+}
+```
+The top-level `product_image_url` here acts as the fallback for any
+shot that doesn't set its own — every shot above happens to override it,
+but it wouldn't need to if one shot were fine using the default photo.
+
+**"Generate a batch for our Women's Running Shoes collection"** — three
+*different* shoe models (not just colorways of one shoe), but still one
+closely related collection sharing a theme and landing page, so it's
+still **one job** (it maps to one Google Ads asset group), with the
+specific model rotated across shots rather than one dominating:
+
+```json
+{
+  "shots": [
+    { "shot_type": "product_only", "scene_prompt": "flat lay, studio white background", "aspect_ratios": ["1:1"], "product_image_url": "https://cdn.example.com/velocity-trainer.png" },
+    { "shot_type": "product_only", "scene_prompt": "three-quarter angle, studio white background", "aspect_ratios": ["1:1"], "product_image_url": "https://cdn.example.com/trail-runner-pro.png" },
+    { "shot_type": "product_only", "scene_prompt": "top-down, laces untied", "aspect_ratios": ["1:1"], "product_image_url": "https://cdn.example.com/cloud-cushion.png" },
+    { "shot_type": "lifestyle_product", "scene_prompt": "worn on a morning trail run, dawn light", "aspect_ratios": ["1:1"], "product_image_url": "https://cdn.example.com/trail-runner-pro.png" },
+    { "shot_type": "lifestyle_product", "scene_prompt": "laced up in a gym locker room", "aspect_ratios": ["1:1"], "product_image_url": "https://cdn.example.com/velocity-trainer.png" },
+    { "shot_type": "cover_lifestyle", "scene_prompt": "runner mid-stride on a city street at sunrise", "aspect_ratios": ["1:1"], "product_image_url": "https://cdn.example.com/cloud-cushion.png" }
+  ]
+}
+```
+Unrelated products (different category, different landing page) should
+instead be separate `generate_google_ad_images` calls — one job, and
+one report, per product. See the skill's "Multiple product photos"
+section for the full reasoning.
 
 ## Upgrading
 
