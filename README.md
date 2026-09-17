@@ -2,8 +2,10 @@
 
 A [loopengine](https://github.com/loopengine-co/loopengine) ability: a
 tool for generating Google-Ads-ready product images from a real product
-photo, plus a skill that teaches an agent how to plan a full 18-20 image
-asset set instead of just generating one shot at a time.
+photo, plus a skill that teaches an agent how to turn a request — a
+single image, a batch of one format, or a full 18-20 image asset set —
+into the right calls, instead of only knowing how to plan one shape of
+batch.
 
 ## What's in it
 
@@ -46,10 +48,12 @@ asset set instead of just generating one shot at a time.
   `path` is a real file written to disk (`AD_IMAGE_OUTPUT_DIR`), not a
   URL or inline base64, so a full multi-format batch doesn't blow the
   conversation's own context budget.
-- **Skill** — `product-google-ad-images`: which ratios to combine in one
-  call vs. keep separate, a suggested shot-type mix, how to write a
-  `scene_prompt` that actually varies shot to shot, and why the tool
-  needs the real product photo rather than a description of it.
+- **Skill** — `product-google-ad-images`: how to size a request (one
+  image, a batch of one format, or a full set) into the right number of
+  calls, which ratios to combine in one call vs. keep separate, a
+  suggested shot-type mix, how to write a `scene_prompt` that actually
+  varies shot to shot, and why the tool needs the real product photo
+  rather than a description of it.
 - **actauth rule** — `generate-google-ad-image-allowed`, `decision: allow`.
   Deliberately not gated behind a human `ask` — see the rule file's own
   comment for why (this is a cost-per-call tool, not a destructive one,

@@ -1,6 +1,6 @@
 ---
 name: product-google-ad-images
-description: How to plan and generate a full set of Google Ads product image assets with generate_google_ad_image — the mix of shot types, how to write a good scene_prompt, and why every call needs the real product photo.
+description: How to turn a request — one image, a batch of one format, or a full asset set — into generate_google_ad_image calls, plus the shot-type mix, how to write a good scene_prompt, and why every call needs the real product photo.
 ---
 
 # Product ad images
@@ -15,6 +15,42 @@ genuinely different compositions, not the same idea repeated, so
 planning the shot list is your job before you start calling the tool,
 not something to hand off to the tool itself. A *full* set spans all
 three of Google Ads' own image formats — see below.
+
+## Sizing the request
+
+Requests come in at three different scopes — read which one you got before
+planning anything, since each implies a different amount of work:
+
+- **"Generate one/a single `<format>` image..."** (optionally "with `<style>`
+  style") — exactly one call. Map the format to `aspect_ratios` (table
+  below), take `shot_type` from the wording if it named one (default
+  `product_only` if not), and write the `scene_prompt` yourself if none was
+  given — don't stop to demand a creative brief for a single image; a
+  reasonable scene beats no image. Return that one result.
+- **"Generate a batch (N) of `<format>` images..."** — N calls, all at that
+  one format only. A request scoped to one format stays scoped to it — don't
+  fold in the other formats just because the full-set table below combines
+  landscape+square elsewhere. Apply the shot-type mix below across the N
+  calls, and give each its own distinct `scene_prompt`; N images sharing one
+  scene defeats the point of a batch.
+- **"Generate a full Google Ads image set..."** (or "all formats",
+  "everything") — the whole three-format batch: 18-20 landscape+square
+  (combined calls) plus 12-15 portrait, per the table below.
+
+Only ask the operator something before generating when it would actually
+change what you'd otherwise do — the product's category/audience if neither
+is obvious from the image or title and the shot mix would look wrong without
+it, or which portrait ratio (`4:5` vs `9:16`) if the request needs portrait
+and doesn't say which. Don't ask just to reconfirm a scope the request
+already stated plainly; when scope genuinely isn't stated at all, default to
+assuming the full set is wanted rather than guessing at a smaller one.
+
+| Say | `aspect_ratios` |
+| --- | --- |
+| "landscape" | `["1.91:1"]` |
+| "square" | `["1:1"]` |
+| "landscape and square" (or the full-set landscape row) | `["1.91:1", "1:1"]` |
+| "portrait" | `["9:16"]` or `["4:5"]` — ask only if both are plausible and the request doesn't say |
 
 ## Why image-edit, not text-to-image
 
@@ -57,12 +93,8 @@ cross-format consistency for real portrait composition quality.
 | Landscape + Square (combined) | 18-20 | `["1.91:1", "1:1"]` | 36-40 (2 per call) |
 | Portrait | 12-15 | `["9:16"]` or `["4:5"]` | 12-15 (1 per call) |
 
-Ask which portrait ratio(s) the campaign actually needs — Google Ads
-uses both `4:5` and `9:16` for different placements, and generating
-both when only one is needed just burns budget. Confirm scope with the
-operator before starting (all formats, or just some) rather than
-assuming a full set is wanted, given each call is a real, metered
-generation.
+Google Ads uses both `4:5` and `9:16` for different placements — see
+"Sizing the request" above for when to ask which one versus just picking.
 
 ## The shot-type mix
 
