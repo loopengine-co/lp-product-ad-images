@@ -177,10 +177,12 @@ three ideas blended well.
 ## After generating
 
 Once every job in the batch reports `done` (or `failed`), each `result`
-entry's `path` is a real file on disk (`AD_IMAGE_OUTPUT_DIR`, default
-`./generated/ad-images`), not a URL or inline image data. Report the
-full list of generated paths back at the end of the batch, grouped by
-format (`aspect_ratio`) and then `shot_type` within each, so the
-operator can review the actual files rather than having to reconstruct
-what got made from dozens of separate job results. Call out any `failed`
-jobs by their `error` rather than silently dropping them from the report.
+entry's `path` is where the file actually landed — a local filesystem
+path under `AD_IMAGE_OUTPUT_DIR` by default, or a `gs://bucket/object`
+URI if the deployment has `AD_IMAGE_STORAGE=gcs` set — never a URL or
+inline image data either way. Report the full list of generated paths
+back at the end of the batch, grouped by format (`aspect_ratio`) and
+then `shot_type` within each, so the operator can review the actual
+files rather than having to reconstruct what got made from dozens of
+separate job results. Call out any `failed` jobs by their `error`
+rather than silently dropping them from the report.

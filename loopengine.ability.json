@@ -9,6 +9,9 @@
     { "name": "OPENAI_IMAGE_MODEL", "description": "Which OpenAI image model to call. Defaults to gpt-image-1 if unset.", "secret": false },
     { "name": "GEMINI_API_KEY", "description": "Google AI Studio / Gemini API key — required when AD_IMAGE_PROVIDER=google.", "secret": true },
     { "name": "GOOGLE_IMAGE_MODEL", "description": "Which Gemini image model to call when AD_IMAGE_PROVIDER=google: gemini-3.1-flash-image (Nano Banana 2, the default) or gemini-3-pro-image (Nano Banana Pro, higher quality and cost).", "secret": false },
-    { "name": "AD_IMAGE_OUTPUT_DIR", "description": "Where generated images are written on disk. Defaults to ./generated/ad-images if unset.", "secret": false }
+    { "name": "AD_IMAGE_OUTPUT_DIR", "description": "Where job-status files always live, and where generated images are written when AD_IMAGE_STORAGE=local. Defaults to ./generated/ad-images if unset.", "secret": false },
+    { "name": "AD_IMAGE_STORAGE", "description": "Where generated images are saved: \"local\" (default, under AD_IMAGE_OUTPUT_DIR) or \"gcs\" (a Google Cloud Storage bucket). Job-status files stay local either way.", "secret": false },
+    { "name": "AD_IMAGE_GCS_BUCKET", "description": "GCS bucket name to upload generated images to — required when AD_IMAGE_STORAGE=gcs. Auth is via Application Default Credentials / GOOGLE_APPLICATION_CREDENTIALS, same as any other Google Cloud client.", "secret": false },
+    { "name": "AD_IMAGE_GCS_PREFIX", "description": "Optional object name prefix inside the GCS bucket (e.g. \"campaigns/summer/\"). Only used when AD_IMAGE_STORAGE=gcs.", "secret": false }
   ]
 }

@@ -7,6 +7,8 @@ import type { ToolDefinition } from 'loopengine'
 type ShotType = 'product_only' | 'lifestyle_product' | 'cover_lifestyle'
 
 interface JobResult {
+  // A local filesystem path (default, AD_IMAGE_STORAGE=local), or a
+  // gs://bucket/object URI when AD_IMAGE_STORAGE=gcs.
   path: string
   shot_type: ShotType
   aspect_ratio: string
@@ -37,6 +39,56 @@ function jobPath(outputDir: string, jobId: string): string {
 async function writeJob(outputDir: string, record: JobRecord): Promise<void> {
   await mkdir(join(outputDir, '.jobs'), { recursive: true })
   await writeFile(jobPath(outputDir, record.job_id), JSON.stringify(record, null, 2))
+}
+
+// Job status files always stay local regardless of AD_IMAGE_STORAGE —
+// they're small operational bookkeeping, not the generated creative
+// itself, so there's no reason to route them through GCS too.
+function validateStorageConfig(): void {
+  const storage = process.env.AD_IMAGE_STORAGE || 'local'
+  if (storage !== 'local' && storage !== 'gcs') {
+    throw new Error(`generate_google_ad_image: AD_IMAGE_STORAGE must be "local" or "gcs" — got "${storage}"`)
+  }
+  if (storage === 'gcs' && !process.env.AD_IMAGE_GCS_BUCKET) {
+    throw new Error('generate_google_ad_image: AD_IMAGE_GCS_BUCKET is not set (required when AD_IMAGE_STORAGE=gcs)')
+  }
+}
+
+// Saves one generated image and returns where it landed — a local
+// filesystem path by default, or a gs://bucket/object URI when
+// AD_IMAGE_STORAGE=gcs. @google-cloud/storage is imported lazily, not at
+// the top of the file, so installing it is only required for callers
+// who actually turn GCS storage on — everyone else (the local default)
+// never needs it, same reasoning as why sharp is a manual `npm install`
+// rather than something add-ability manages.
+async function saveImage(args: { buffer: Buffer; filename: string; outputDir: string }): Promise<string> {
+  const storage = process.env.AD_IMAGE_STORAGE || 'local'
+  if (storage === 'gcs') {
+    const bucketName = process.env.AD_IMAGE_GCS_BUCKET as string // validateStorageConfig already required this
+    const objectName = `${process.env.AD_IMAGE_GCS_PREFIX || ''}${args.filename}`
+    // Imported by a variable, not a string literal, so tsc treats this as
+    // `Promise<any>` instead of trying to resolve @google-cloud/storage's
+    // own types at compile time — installing it is only required at
+    // runtime for callers who actually set AD_IMAGE_STORAGE=gcs; everyone
+    // else (the local default) would otherwise fail `tsc` just for not
+    // having a package they never use.
+    const gcsModuleName = '@google-cloud/storage'
+    let gcs: any
+    try {
+      gcs = await import(gcsModuleName)
+    } catch {
+      throw new Error(
+        'generate_google_ad_image: AD_IMAGE_STORAGE=gcs requires the @google-cloud/storage package — npm install @google-cloud/storage in your own project.',
+      )
+    }
+    const client = new gcs.Storage()
+    await client.bucket(bucketName).file(objectName).save(args.buffer, { contentType: 'image/png' })
+    return `gs://${bucketName}/${objectName}`
+  }
+  await mkdir(args.outputDir, { recursive: true })
+  const outputPath = join(args.outputDir, args.filename)
+  await writeFile(outputPath, args.buffer)
+  return outputPath
 }
 
 // Keeps the actual product accurate across every shot instead of letting
@@ -285,11 +337,10 @@ async function runJob(args: {
     const generate = provider === 'google' ? generateWithGoogle : generateWithOpenAI
     const generations = await Promise.all(targetRatios.map((targetRatio) => generate({ productBytes, productContentType, prompt, targetRatio, quality })))
 
-    await mkdir(outputDir, { recursive: true })
-
     // One shared timestamp + slug for the whole call, disambiguated per
     // ratio — these files are siblings from the same call, and should
-    // sort/group together on disk even though each is its own generation.
+    // sort/group together wherever they land even though each is its
+    // own generation.
     const stamp = Date.now()
     const sceneSlug = slugify(scenePrompt) || 'shot'
 
@@ -305,10 +356,9 @@ async function runJob(args: {
       const cropped = await sharp(generation.buffer).extract(crop).png().toBuffer()
 
       const filename = `${stamp}-${shotType}-${sceneSlug}-${ratioLabel(aspectRatioSpec)}.png`
-      const outputPath = join(outputDir, filename)
-      await writeFile(outputPath, cropped)
+      const path = await saveImage({ buffer: cropped, filename, outputDir })
 
-      outputs.push({ path: outputPath, shot_type: shotType, aspect_ratio: aspectRatioSpec, width: crop.width, height: crop.height })
+      outputs.push({ path, shot_type: shotType, aspect_ratio: aspectRatioSpec, width: crop.width, height: crop.height })
     }
 
     await writeJob(outputDir, { job_id: jobId, status: 'done', created_at: createdAt, finished_at: new Date().toISOString(), request, result: outputs })
@@ -374,6 +424,7 @@ export const generateGoogleAdImage: ToolDefinition = {
     if (provider !== 'openai' && provider !== 'google') {
       throw new Error(`generate_google_ad_image: AD_IMAGE_PROVIDER must be "openai" or "google" — got "${provider}"`)
     }
+    validateStorageConfig()
 
     const productImageUrl = String(input.product_image_url)
     const shotType = String(input.shot_type) as ShotType

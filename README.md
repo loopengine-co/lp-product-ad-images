@@ -19,13 +19,14 @@ batch.
   `{ status: "done", result: [...] }` once finished (`result` is
   `[{ path, shot_type, aspect_ratio, width, height }, ...]`, one entry
   per ratio requested), or `{ status: "failed", error }` if the
-  generation itself errored. `path` is a real file written to disk
-  (`AD_IMAGE_OUTPUT_DIR`), not a URL or inline base64, so a full
-  multi-format batch doesn't blow the conversation's own context budget.
-  The background generation sends the real product photo to an
-  image-edit model along with a `shot_type`-specific instruction to keep
-  the product exactly as shown — not a text-only reinterpretation of it.
-  `shot_type` is one of:
+  generation itself errored. `path` is where the file actually landed —
+  a local filesystem path (`AD_IMAGE_OUTPUT_DIR`, the default) or a
+  `gs://bucket/object` URI (`AD_IMAGE_STORAGE=gcs`) — never a URL or
+  inline base64, so a full multi-format batch doesn't blow the
+  conversation's own context budget. The background generation sends
+  the real product photo to an image-edit model along with a
+  `shot_type`-specific instruction to keep the product exactly as
+  shown — not a text-only reinterpretation of it. `shot_type` is one of:
   - `product_only` — clean, product-alone shot.
   - `lifestyle_product` — the product in realistic, plausible use.
   - `cover_lifestyle` — an aspirational hero/cover shot; the product is
@@ -56,6 +57,18 @@ batch.
   center-crops down to the exact ratio — never upscaled or padded.
   Supports all three Google Ads image formats: `"1.91:1"` (landscape,
   the default), `"1:1"` (square), and `"4:5"`/`"9:16"` (portrait).
+
+  **Storage**, chosen once via `AD_IMAGE_STORAGE` (default `local`):
+  - `local` — writes each PNG under `AD_IMAGE_OUTPUT_DIR`; `path` in the
+    result is a real filesystem path.
+  - `gcs` — uploads each PNG to `AD_IMAGE_GCS_BUCKET` (optionally under
+    `AD_IMAGE_GCS_PREFIX`) instead; `path` is a `gs://bucket/object` URI.
+    Requires `npm install @google-cloud/storage` in your own project
+    (lazily imported, so `local` users never need it) and standard
+    Google Cloud auth (Application Default Credentials or
+    `GOOGLE_APPLICATION_CREDENTIALS`) — this ability doesn't take a
+    credentials env var of its own. Job-status files always stay local
+    under `AD_IMAGE_OUTPUT_DIR/.jobs/` regardless of this setting.
 - **Tool** — `check_google_ad_image_job(job_id)`. Reads back the status
   of a job `generate_google_ad_image` started, from a JSON file under
   `AD_IMAGE_OUTPUT_DIR/.jobs/` — read-only, safe to poll as often as
@@ -88,16 +101,23 @@ Then:
      optionally `GOOGLE_IMAGE_MODEL=gemini-3-pro-image` for Nano Banana
      Pro instead of the default Nano Banana 2.
    - Optionally `AD_IMAGE_OUTPUT_DIR` if you don't want generated
-     images landing under `./generated/ad-images`.
+     images (when storage is `local`) or job-status files (always)
+     landing under `./generated/ad-images`.
+   - Optionally `AD_IMAGE_STORAGE=gcs` plus `AD_IMAGE_GCS_BUCKET` (and
+     optionally `AD_IMAGE_GCS_PREFIX`) to upload images to GCS instead
+     of writing them locally.
 2. `npm install sharp` in your own project — this ability's tool uses
-   it for the center-crop step, for both providers. Installing an
-   ability copies its files in, it doesn't manage your project's own
-   `package.json`, so this is a one-time manual step (see loopengine's
-   own `ABILITIES.md` on why abilities are copied rather than imported).
-3. Add wherever generated images land (`AD_IMAGE_OUTPUT_DIR`, default
-   `generated/ad-images`, including its `.jobs/` subdirectory) to your
+   it for the center-crop step, for both providers and both storage
+   backends. If you set `AD_IMAGE_STORAGE=gcs`, also
+   `npm install @google-cloud/storage`. Installing an ability copies
+   its files in, it doesn't manage your project's own `package.json`,
+   so these are one-time manual steps (see loopengine's own
+   `ABILITIES.md` on why abilities are copied rather than imported).
+3. If using `local` storage, add wherever generated images land
+   (`AD_IMAGE_OUTPUT_DIR`, default `generated/ad-images`) to your
    project's own `.gitignore` if you don't want to commit generated
-   creative or job-status files.
+   creative. Either way, that same directory's `.jobs/` subdirectory
+   holds job-status files and is worth ignoring too.
 
 Every call costs real money against whichever provider/model you've
 configured — see the actauth rule's own comment if you want a per-image
