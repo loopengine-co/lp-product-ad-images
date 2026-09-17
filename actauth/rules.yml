@@ -15,3 +15,11 @@
   scope: "*/*"
   tool: generate_google_ad_image
   decision: allow
+
+# Read-only status check on a job the rule above already allowed
+# starting — gating this one too would mean approving twice for the same
+# generation (once to start it, once to see if it's done).
+- name: check-google-ad-image-job-allowed
+  scope: "*/*"
+  tool: check_google_ad_image_job
+  decision: allow

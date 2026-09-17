@@ -1,6 +1,6 @@
 {
   "loopengineVersion": "^0.1.24",
-  "tools": ["tools/generate_google_ad_image.ts"],
+  "tools": ["tools/generate_google_ad_image.ts", "tools/check_google_ad_image_job.ts"],
   "skills": ["skills/product-google-ad-images"],
   "actauth": "actauth/rules.yml",
   "env": [

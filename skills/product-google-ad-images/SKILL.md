@@ -1,16 +1,22 @@
 ---
 name: product-google-ad-images
-description: How to turn a request — one image, a batch of one format, or a full asset set — into generate_google_ad_image calls, plus the shot-type mix, how to write a good scene_prompt, and why every call needs the real product photo.
+description: How to turn a request — one image, a batch of one format, or a full asset set — into generate_google_ad_image calls, how to poll check_google_ad_image_job for the result, plus the shot-type mix, how to write a good scene_prompt, and why every call needs the real product photo.
 ---
 
 # Product ad images
 
-`generate_google_ad_image` runs one real generation per call and exports it as
-every ratio you pass in `aspect_ratios` — all sharing the exact same
-underlying photo, not independently regenerated per ratio (image
-generation isn't deterministic; two separate calls for "the same shot"
-in two ratios would drift in composition, lighting, even framing). There
-is no batch-of-shots parameter, though — a good asset set is dozens of
+`generate_google_ad_image` starts one independent, real generation for
+*each* ratio you pass in `aspect_ratios` — never one shared generation
+cropped down to the rest, for either provider. Two ratios from the same
+call can still come out with different composition, lighting, even
+framing, exactly as two separate calls would (image generation isn't
+deterministic) — passing several ratios in one call is purely a
+bookkeeping convenience (one `job_id` covers all of them), not a way to
+get matching content or to save cost; each ratio is its own billed
+generation regardless of how you group them. The tool returns
+immediately with that `job_id`, not the finished images — see "Starting
+a job and getting the result" below for the poll loop. There is no
+batch-of-shots parameter, though — a good asset set is dozens of
 genuinely different compositions, not the same idea repeated, so
 planning the shot list is your job before you start calling the tool,
 not something to hand off to the tool itself. A *full* set spans all
@@ -52,6 +58,38 @@ assuming the full set is wanted rather than guessing at a smaller one.
 | "landscape and square" (or the full-set landscape row) | `["1.91:1", "1:1"]` |
 | "portrait" | `["9:16"]` or `["4:5"]` — ask only if both are plausible and the request doesn't say |
 
+## Starting a job and getting the result
+
+Every `generate_google_ad_image` call returns right away —
+`{ "job_id": "...", "status": "processing" }` — before the actual image
+exists. The real work (fetching the product photo, the provider call,
+cropping) keeps running in the background; a single generation can take
+up to a minute or more, longer at high quality. Poll
+`check_google_ad_image_job({ "job_id": "..." })` to find out when it's
+ready:
+
+- `{ "status": "processing" }` — not ready yet, check again shortly.
+- `{ "status": "done", "result": [...] }` — `result` is the same array
+  shape `generate_google_ad_image` used to return directly:
+  `[{ path, shot_type, aspect_ratio, width, height }, ...]`.
+- `{ "status": "failed", "error": "..." }` — the generation itself
+  errored (bad product URL, provider error, etc.); report the error
+  rather than retrying blindly, since most causes (a dead image URL, a
+  missing API key) won't fix themselves on a second attempt.
+
+For a single-image request, start the one job, then poll it until
+`done`/`failed` before reporting back. For a batch, start *all* the
+jobs for that batch first, then poll the outstanding ones — this is the
+actual reason the tool is job-based rather than blocking: a batch of 18
+images no longer has to wait for each generation to finish before the
+next one starts, so the whole batch's wall-clock time is close to one
+generation's time, not 18 of them stacked end to end.
+
+This background work only continues for as long as the underlying agent
+process stays running — fine for a long-lived server (`npx loopengine
+dev`/`serve`), but a job started right before a short-lived, single-shot
+CLI invocation exits may never get the chance to finish.
+
 ## Why image-edit, not text-to-image
 
 Every call is a real edit of the actual `product_image_url` you pass in,
@@ -64,34 +102,30 @@ text description of it just invites the model to drift from the real
 thing. `scene_prompt` is for the *scene* only: where it is, what's
 around it, the lighting, the mood.
 
-## The three formats — and which ones share a call
+## The three formats
 
-Landscape and square are the *same underlying frame*, just cropped
-differently (both are 1024px tall natively) — always request them
-together, one call per shot:
+Every format — landscape, square, portrait — is generated at its own
+native size/preset regardless of how you group them into calls, since
+generating at the ratio's own native canvas (rather than cropping it out
+of a different one) keeps the most composition and resolution for that
+ratio. There's no format-pairing rule anymore: grouping landscape and
+square into one call, like this,
 
 ```json
 { "aspect_ratios": ["1.91:1", "1:1"], "shot_type": "...", "scene_prompt": "..." }
 ```
 
-That one call produces both a landscape and a square file, guaranteed
-to be the same photo, same lighting, same composition — just framed
-differently. Do **not** call the tool once for landscape and again for
-square with the "same" `scene_prompt`; two separate generations are two
-separate photos, not two crops of one.
+produces two files from **two independent generations**, not one shared
+photo cropped two ways — grouping them just means one `job_id` to poll
+for both instead of two. Group ratios in one call when that's simpler to
+track; call once per ratio when you'd rather poll each independently
+(e.g. so a slow portrait generation doesn't hold up reporting the
+landscape one that already finished).
 
-Portrait is different: keep it to its **own separate call**,
-`aspect_ratios: ["9:16"]` (or `["4:5"]`), with its own `scene_prompt`.
-Portrait benefits from being generated at its own native vertical
-canvas (taller, more resolution, room for genuinely vertical framing —
-a person standing, product held up) rather than a narrow crop pulled
-out of a landscape-framed photo, so intentionally trading the
-cross-format consistency for real portrait composition quality.
-
-| Format | Shots (calls) | `aspect_ratios` per call | Files produced |
-| --- | --- | --- | --- |
-| Landscape + Square (combined) | 18-20 | `["1.91:1", "1:1"]` | 36-40 (2 per call) |
-| Portrait | 12-15 | `["9:16"]` or `["4:5"]` | 12-15 (1 per call) |
+| Format | Shots | `aspect_ratios` per shot | Generations (billed) | Files produced |
+| --- | --- | --- | --- | --- |
+| Landscape + Square (grouped per shot) | 18-20 | `["1.91:1", "1:1"]` | 36-40 (2 per shot) | 36-40 |
+| Portrait | 12-15 | `["9:16"]` or `["4:5"]` | 12-15 (1 per shot) | 12-15 |
 
 Google Ads uses both `4:5` and `9:16` for different placements — see
 "Sizing the request" above for when to ask which one versus just picking.
@@ -142,11 +176,11 @@ three ideas blended well.
 
 ## After generating
 
-Each call returns a JSON array, one entry per ratio requested —
-`[{ path, shot_type, aspect_ratio, width, height }, ...]`. `path` is a
-real file on disk (`AD_IMAGE_OUTPUT_DIR`, default
+Once every job in the batch reports `done` (or `failed`), each `result`
+entry's `path` is a real file on disk (`AD_IMAGE_OUTPUT_DIR`, default
 `./generated/ad-images`), not a URL or inline image data. Report the
 full list of generated paths back at the end of the batch, grouped by
 format (`aspect_ratio`) and then `shot_type` within each, so the
 operator can review the actual files rather than having to reconstruct
-what got made from dozens of separate tool results.
+what got made from dozens of separate job results. Call out any `failed`
+jobs by their `error` rather than silently dropping them from the report.
