@@ -36,9 +36,12 @@ plan one shape of batch.
   Each `results` entry is
   `{ shot_index, shot_type, aspect_ratio, product_image_url, status, path?, width?, height?, error? }`.
   `path` is where the file actually landed — a local filesystem path
-  (`AD_IMAGE_OUTPUT_DIR`, the default) or a `gs://bucket/object` URI
-  (`AD_IMAGE_STORAGE=gcs`) — never a URL or inline base64, so a full
-  multi-format batch doesn't blow the conversation's own context budget.
+  (`AD_IMAGE_OUTPUT_DIR`, the default), or (`AD_IMAGE_STORAGE=gcs`) a
+  time-limited signed HTTPS URL that's actually openable in a browser,
+  falling back to a bare `gs://bucket/object` URI (not openable outside
+  GCP's own tooling) if the configured credentials can't sign one —
+  never inline base64 either way, so a full multi-format batch doesn't
+  blow the conversation's own context budget.
   The background generation sends the real product photo to an
   image-edit model along with a `shot_type`-specific instruction to keep
   the product exactly as shown — not a text-only reinterpretation of it.
@@ -85,13 +88,19 @@ plan one shape of batch.
   - `local` — writes each PNG under `AD_IMAGE_OUTPUT_DIR`; `path` in each
     result is a real filesystem path.
   - `gcs` — uploads each PNG to `AD_IMAGE_GCS_BUCKET` (optionally under
-    `AD_IMAGE_GCS_PREFIX`) instead; `path` is a `gs://bucket/object` URI.
-    Requires `npm install @google-cloud/storage` in your own project
-    (lazily imported, so `local` users never need it) and standard
-    Google Cloud auth (Application Default Credentials or
-    `GOOGLE_APPLICATION_CREDENTIALS`) — this ability doesn't take a
-    credentials env var of its own. Job-status files always stay local
-    under `AD_IMAGE_OUTPUT_DIR/.jobs/` regardless of this setting.
+    `AD_IMAGE_GCS_PREFIX`) instead, then generates a V4 signed URL for it
+    (valid for `AD_IMAGE_GCS_SIGNED_URL_EXPIRY` seconds, default 7 days —
+    the GCS-imposed maximum) so `path` is a real `https://` link, not
+    just an internal `gs://` address. Signing requires credentials that
+    can actually sign (a service account key, or IAM `signBlob` via
+    impersonation) — plain user Application Default Credentials from
+    `gcloud auth application-default login` can't, so in that case
+    `path` falls back to the bare `gs://bucket/object` URI instead (the
+    upload itself still succeeds either way). Requires
+    `npm install @google-cloud/storage` in your own project (lazily
+    imported, so `local` users never need it). Job-status files always
+    stay local under `AD_IMAGE_OUTPUT_DIR/.jobs/` regardless of this
+    setting.
 - **Tool** — `check_google_ad_image_job(job_id)`. Reads back the status
   of a job `generate_google_ad_images` started, from a JSON file under
   `AD_IMAGE_OUTPUT_DIR/.jobs/` — read-only, safe to poll as often as
@@ -128,8 +137,11 @@ Then:
      images (when storage is `local`) or job-status files (always)
      landing under `./generated/ad-images`.
    - Optionally `AD_IMAGE_STORAGE=gcs` plus `AD_IMAGE_GCS_BUCKET` (and
-     optionally `AD_IMAGE_GCS_PREFIX`) to upload images to GCS instead
-     of writing them locally.
+     optionally `AD_IMAGE_GCS_PREFIX`, `AD_IMAGE_GCS_SIGNED_URL_EXPIRY`)
+     to upload images to GCS instead of writing them locally. Use a
+     service account key (`GOOGLE_APPLICATION_CREDENTIALS` pointing at
+     one) rather than plain user ADC if you want real signed URLs back —
+     see the tool's own description above for what happens otherwise.
    - Optionally `AD_IMAGE_CONCURRENCY` (default `4`) to raise or lower
      how many generations one batch job runs at once — tune it against
      your actual provider rate limits.

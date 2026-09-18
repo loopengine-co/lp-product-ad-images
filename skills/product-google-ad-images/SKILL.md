@@ -116,6 +116,28 @@ process stays running — fine for a long-lived server (`npx loopengine
 dev`/`serve`), but a job started right before a short-lived, single-shot
 CLI invocation exits may never get the chance to finish.
 
+### Don't poll a big job to completion in the same turn
+
+The whole reason this tool returns a `job_id` instead of blocking is so a
+caller — especially a live chat turn — isn't stuck waiting on generation
+time. Polling in a loop until `status` settles undoes that if the batch is
+large enough to take minutes: the turn just sits "in progress" the whole
+time instead, which is exactly what the job design was meant to avoid, and
+risks tripping whatever request/connection timeout the channel has.
+
+- **A single shot (or a small handful of units — roughly what one
+  generation's worth of time covers)** is fine to poll inline: start the
+  job, poll `check_google_ad_image_job` until it settles, then report the
+  result in that same reply. This typically finishes within a minute or so.
+- **A multi-shot batch or full set** — reply right after starting the job,
+  don't poll it to completion first. Tell the operator the `job_id`, a
+  rough sense of what was started (e.g. "started a batch of 24 images"),
+  and that you'll report back once it's done. The job keeps running
+  regardless of whether anything is actively polling it; check it again
+  in response to the operator's next message (e.g. "is it done?", or the
+  next time this conversation continues) rather than holding the current
+  turn open for however many minutes the whole batch takes.
+
 ## Why image-edit, not text-to-image
 
 Every shot is a real edit of an actual product photo, not a text
@@ -244,12 +266,17 @@ three ideas blended well.
 
 ## After generating
 
-Once the job's `status` is `"done"` or `"partial"` (see "Starting the job
-and polling it" above for when to stop polling), each successful `results`
-entry's `path` is where the file actually landed — a local filesystem
-path under `AD_IMAGE_OUTPUT_DIR` by default, or a `gs://bucket/object`
-URI if the deployment has `AD_IMAGE_STORAGE=gcs` set — never a URL or
-inline image data either way. Report the full list of generated paths
+This applies once you're actually checking a finished job — whether that's
+later in the same turn (a small request) or in response to a follow-up
+message (a big one you already replied about — see "Don't poll a big job
+to completion in the same turn" above). Once the job's `status` is `"done"`
+or `"partial"`, each successful `results` entry's `path` is where the file
+actually landed — a local filesystem path under `AD_IMAGE_OUTPUT_DIR` by
+default, or (when the deployment has `AD_IMAGE_STORAGE=gcs` set) a
+time-limited signed HTTPS URL that's actually openable in a browser —
+falling back to a bare `gs://bucket/object` URI (not openable anywhere
+outside GCP's own tooling) if the configured credentials can't sign one.
+Report the full list of generated paths
 back, grouped by format (`aspect_ratio`) and then `shot_type` within
 each, so the operator can review the actual files rather than having to
 reconstruct what got made from one long `results` array. Call out any

@@ -24,8 +24,10 @@ interface UnitResult {
   product_image_url: string
   status: 'done' | 'failed'
   // A local filesystem path (default, AD_IMAGE_STORAGE=local), or a
-  // gs://bucket/object URI when AD_IMAGE_STORAGE=gcs. Present only when
-  // status is "done".
+  // time-limited signed HTTPS URL when AD_IMAGE_STORAGE=gcs — falls back
+  // to a bare gs://bucket/object URI if signing itself isn't possible
+  // with whatever credentials are configured (see saveImage's own doc
+  // comment). Present only when status is "done".
   path?: string
   width?: number
   height?: number
@@ -81,7 +83,7 @@ function validateStorageConfig(): void {
 }
 
 // Saves one generated image and returns where it landed — a local
-// filesystem path by default, or a gs://bucket/object URI when
+// filesystem path by default, or an accessible URL when
 // AD_IMAGE_STORAGE=gcs. @google-cloud/storage is imported lazily, not at
 // the top of the file, so installing it is only required for callers
 // who actually turn GCS storage on — everyone else (the local default)
@@ -108,8 +110,26 @@ async function saveImage(args: { buffer: Buffer; filename: string; outputDir: st
       )
     }
     const client = new gcs.Storage()
-    await client.bucket(bucketName).file(objectName).save(args.buffer, { contentType: 'image/png' })
-    return `gs://${bucketName}/${objectName}`
+    const file = client.bucket(bucketName).file(objectName)
+    await file.save(args.buffer, { contentType: 'image/png' })
+
+    // A bare gs://bucket/object URI isn't fetchable by anything outside
+    // GCP's own tooling — a signed URL is an actual https:// link usable
+    // in a browser or a chat UI. Signing requires credentials that can
+    // actually sign (a service account key, or IAM signBlob via
+    // impersonation) — plain user Application Default Credentials
+    // (`gcloud auth application-default login`) can't, and getSignedUrl
+    // throws in that case. The upload above already succeeded either
+    // way, so fall back to the bare URI rather than failing a unit whose
+    // image is genuinely sitting in the bucket, just not signable here.
+    try {
+      const expirySecondsRaw = Number(process.env.AD_IMAGE_GCS_SIGNED_URL_EXPIRY || '604800')
+      const expirySeconds = Number.isFinite(expirySecondsRaw) && expirySecondsRaw > 0 ? expirySecondsRaw : 604800
+      const [signedUrl] = await file.getSignedUrl({ action: 'read', expires: Date.now() + expirySeconds * 1000 })
+      return signedUrl
+    } catch {
+      return `gs://${bucketName}/${objectName}`
+    }
   }
   await mkdir(args.outputDir, { recursive: true })
   const outputPath = join(args.outputDir, args.filename)
