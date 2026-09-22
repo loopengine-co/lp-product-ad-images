@@ -233,7 +233,7 @@ const OPENAI_NATIVE_SIZES = [
 async function generateWithOpenAI({ productBytes, productContentType, prompt, targetRatio, quality }: GenerationArgs): Promise<Generation> {
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) throw new Error('generate_google_ad_images: OPENAI_API_KEY is not set (required when AD_IMAGE_PROVIDER=openai, the default)')
-  const model = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1'
+  const model = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2.5-sunburst'
 
   const nativeSize = OPENAI_NATIVE_SIZES.reduce((best, size) => {
     const bestDiff = Math.abs(best.width / best.height - targetRatio)

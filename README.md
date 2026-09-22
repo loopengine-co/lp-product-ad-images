@@ -60,9 +60,13 @@ plan one shape of batch.
 
   **Two providers**, chosen once via `AD_IMAGE_PROVIDER` (a deployment
   setting, not a per-call argument):
-  - `openai` (default) — `gpt-image-1` by default, configurable via
-    `OPENAI_IMAGE_MODEL`. Generates at one of three fixed native pixel
-    sizes (landscape 1536×1024, square 1024×1024, portrait 1024×1536).
+  - `openai` (default) — `gpt-image-2.5-sunburst` by default, configurable
+    via `OPENAI_IMAGE_MODEL` (e.g. `gpt-image-2.5-flare` for faster, lower-
+    precision generation). Sunburst is the default because this ability
+    edits a real product photo into an ad rather than generating a scene
+    from scratch, and editing precision is what keeps the product looking
+    like the product. Generates at one of three fixed native pixel sizes
+    (landscape 1536×1024, square 1024×1024, portrait 1024×1536).
   - `google` — Google's Gemini image models, aka "Nano Banana":
     `gemini-3.1-flash-image` (**Nano Banana 2**, the default) or
     `gemini-3-pro-image` (**Nano Banana Pro**, higher quality and cost)
