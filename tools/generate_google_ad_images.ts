@@ -404,6 +404,21 @@ interface FetchedProduct {
   contentType: string
 }
 
+// OpenAI's images/edits endpoint only accepts an exact "image/jpeg",
+// "image/png", or "image/webp" Content-Type — some CDNs/servers instead
+// serve the non-standard "image/jpg" alias (or append "; charset=..."),
+// neither of which OpenAI accepts even though the actual bytes are a
+// perfectly valid JPEG. Normalized once here so both providers get the
+// canonical type regardless of what the source server actually sent.
+const CONTENT_TYPE_ALIASES: Record<string, string> = {
+  'image/jpg': 'image/jpeg',
+  'image/x-png': 'image/png',
+}
+function normalizeImageContentType(raw: string): string {
+  const bare = raw.split(';')[0].trim().toLowerCase()
+  return CONTENT_TYPE_ALIASES[bare] || bare
+}
+
 // One product photo can be shared by many shots (the common case — one
 // photo, a varied shot list) or differ per shot (a request that hands
 // over several photos of the same product and lets the caller pick which
@@ -419,7 +434,7 @@ function createProductFetcher(): (url: string) => Promise<FetchedProduct> {
       pending = (async () => {
         const res = await fetch(url)
         if (!res.ok) throw new Error(`could not fetch product_image_url (HTTP ${res.status})`)
-        return { bytes: Buffer.from(await res.arrayBuffer()), contentType: res.headers.get('content-type') || 'image/png' }
+        return { bytes: Buffer.from(await res.arrayBuffer()), contentType: normalizeImageContentType(res.headers.get('content-type') || 'image/png') }
       })()
       cache.set(url, pending)
     }
