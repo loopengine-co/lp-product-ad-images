@@ -337,7 +337,12 @@ async function generateWithGoogle({ productBytes, productContentType, prompt, ta
   const model = process.env.GOOGLE_IMAGE_MODEL || 'gemini-3.1-flash-image' // Nano Banana 2; set to gemini-3-pro-image for Nano Banana Pro
 
   const aspectRatio = nearestGooglePreset(targetRatio)
-  const imageSize = quality === 'high' ? '2K' : '1K'
+  // Google's own quality lever is a binary 1K/2K, not OpenAI's five-tier
+  // low/medium/high/xhigh/max scale — "high" and up all mean "give me
+  // the better one" here, not just an exact "high" match (which would
+  // otherwise silently give xhigh/max *less* detail than plain "high",
+  // the opposite of what asking for a higher tier should ever do).
+  const imageSize = quality === 'high' || quality === 'xhigh' || quality === 'max' ? '2K' : '1K'
 
   const res = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
     method: 'POST',
@@ -588,8 +593,9 @@ export const generateGoogleAdImages: ToolDefinition = {
       },
       quality: {
         type: 'string',
-        enum: ['low', 'medium', 'high'],
-        description: 'Generation quality, also the main cost lever, applied to every shot in this batch — default "high" for ad-ready output.',
+        enum: ['low', 'medium', 'high', 'xhigh', 'max'],
+        description:
+          'Generation quality, also the main cost lever, applied to every shot in this batch — default "high" for ad-ready output. "xhigh"/"max" are only valid on gpt-image-2.5-sunburst/flare (the default OPENAI_IMAGE_MODEL) — gpt-image-2 and earlier only support low/medium/high and reject the other two.',
       },
     },
     required: ['shots'],

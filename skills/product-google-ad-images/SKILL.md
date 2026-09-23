@@ -62,6 +62,29 @@ assuming the full set is wanted rather than guessing at a smaller one.
 | "landscape and square" (or the full-set landscape row) | `["1.91:1", "1:1"]` |
 | "portrait" | `["9:16"]` or `["4:5"]` — ask only if both are plausible and the request doesn't say |
 
+## Choosing quality
+
+`quality` applies to the whole batch, not per shot — one call, one cost
+tier for every unit in it. Default to `"high"` unless the request signals
+otherwise; it's already ad-ready and is what most requests actually want.
+Don't ask the operator which quality to use — infer it from what they
+said, the same way `aspect_ratios`/`shot_type` get inferred above:
+
+- **"draft"/"quick"/"rough"/"doesn't need to be high quality"/testing a
+  lot of concepts cheaply** — `"low"` or `"medium"`. Good for previewing
+  scene ideas or a large shot-mix before committing to a real batch.
+- **Nothing said about quality** — `"high"` (the default). Right for the
+  large majority of real ad creative.
+- **"as sharp/detailed as possible"/fine printed text or a logo on the
+  product that needs to stay crisp/a hero shot going into a large
+  placement** — `"xhigh"` or `"max"`. Real added cost for a real
+  difference only in these cases; not a blanket "better" setting to
+  reach for by default. Only valid on `gpt-image-2.5-sunburst`/`-flare`
+  (this ability's default `OPENAI_IMAGE_MODEL`) — rejected outright by
+  `gpt-image-2` and earlier, and on the Google provider `xhigh`/`max`
+  just mean the same `2K` size `"high"` already gets (Google's own lever
+  is a binary 1K/2K, not a five-tier scale).
+
 ## Starting the job and polling it
 
 One call starts the whole thing:
