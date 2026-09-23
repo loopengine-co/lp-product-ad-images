@@ -104,7 +104,11 @@ plan one shape of batch.
     `npm install @google-cloud/storage` in your own project (lazily
     imported, so `local` users never need it). Job-status files always
     stay local under `AD_IMAGE_OUTPUT_DIR/.jobs/` regardless of this
-    setting.
+    setting. If ADC alone can't sign, set
+    `GOOGLE_APPLICATION_CREDENTIALS_JSON` to the entire contents of a
+    downloaded service-account key file — the one setup path that needs
+    nothing but the GCP Console and the Admin UI's Environment tab, no
+    shell/SSH access to wherever this is running required.
 - **Tool** — `check_google_ad_image_job(job_id)`. Reads back the status
   of a job `generate_google_ad_images` started, from a JSON file under
   `AD_IMAGE_OUTPUT_DIR/.jobs/` — read-only, safe to poll as often as
@@ -144,8 +148,10 @@ Then:
      optionally `AD_IMAGE_GCS_PREFIX`, `AD_IMAGE_GCS_SIGNED_URL_EXPIRY`)
      to upload images to GCS instead of writing them locally. Use a
      service account key (`GOOGLE_APPLICATION_CREDENTIALS` pointing at
-     one) rather than plain user ADC if you want real signed URLs back —
-     see the tool's own description above for what happens otherwise.
+     one, or `GOOGLE_APPLICATION_CREDENTIALS_JSON` pasted directly if you
+     can't get a file onto the server) rather than plain user ADC if you
+     want real signed URLs back — see the tool's own description above
+     for what happens otherwise.
    - Optionally `AD_IMAGE_CONCURRENCY` (default `4`) to raise or lower
      how many generations one batch job runs at once — tune it against
      your actual provider rate limits.

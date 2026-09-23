@@ -69,6 +69,31 @@ async function writeJob(outputDir: string, record: JobRecord): Promise<void> {
   await writeFile(jobPath(outputDir, record.job_id), JSON.stringify(record, null, 2))
 }
 
+// Builds the Storage client — Application Default Credentials (a real
+// key file via GOOGLE_APPLICATION_CREDENTIALS, gcloud user credentials,
+// or the GCE/Cloud Run metadata server) by default, needing zero setup
+// here. GOOGLE_APPLICATION_CREDENTIALS_JSON is the one non-ADC path this
+// reads itself: the *entire contents* of a downloaded service-account
+// key file, pasted directly into an env var — for an operator who can
+// create a key via the GCP Console's own UI but has no way to get a
+// file onto wherever this is actually running (no SSH, no shell). Same
+// design as create_zip_archive's own buildGcsStorageClient — duplicated
+// here rather than shared since abilities can't import each other's
+// code.
+function buildGcsStorageClient(gcs: any): any {
+  const credentialsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
+  if (!credentialsJson) return new gcs.Storage()
+  let credentials: { project_id?: string }
+  try {
+    credentials = JSON.parse(credentialsJson)
+  } catch {
+    throw new Error(
+      'generate_google_ad_images: GOOGLE_APPLICATION_CREDENTIALS_JSON is not valid JSON — paste the entire contents of the downloaded service-account key file, unedited.',
+    )
+  }
+  return new gcs.Storage({ credentials, projectId: credentials.project_id })
+}
+
 // Job status files always stay local regardless of AD_IMAGE_STORAGE —
 // they're small operational bookkeeping, not the generated creative
 // itself, so there's no reason to route them through GCS too.
@@ -109,7 +134,7 @@ async function saveImage(args: { buffer: Buffer; filename: string; outputDir: st
         'generate_google_ad_images: AD_IMAGE_STORAGE=gcs requires the @google-cloud/storage package — npm install @google-cloud/storage in your own project.',
       )
     }
-    const client = new gcs.Storage()
+    const client = buildGcsStorageClient(gcs)
     const file = client.bucket(bucketName).file(objectName)
     await file.save(args.buffer, { contentType: 'image/png' })
 
