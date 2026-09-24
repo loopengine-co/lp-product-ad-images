@@ -318,38 +318,43 @@ later in the same turn (a small request) or in response to a follow-up
 message (a big one you already replied about — see "Don't poll a big job
 to completion in the same turn" above). Once the job's `status` is `"done"`
 or `"partial"`, each successful `results` entry's `path` is where the file
-actually landed — a local filesystem path under `AD_IMAGE_OUTPUT_DIR` by
-default, or (when the deployment has `AD_IMAGE_STORAGE=gcs` set) a short
-`/storage-redirect?provider=gcs&...` URL, relative to this same loopengine server, that
-resolves to the actual image when opened from a browser already logged
-into it. Report the full list of generated paths back, grouped by format
+actually landed — almost always a short relative URL (`/storage-redirect`
+for `AD_IMAGE_STORAGE=gcs`, `/local-file` for the `local` default), both
+resolving to the actual image when opened from a browser already logged
+into this same loopengine server; only when `AD_IMAGE_OUTPUT_DIR` is set
+to an absolute path outside the deployment's own project directory is
+`path` a bare filesystem path instead, with no web-accessible URL at all.
+Report the full list of generated paths back, grouped by format
 (`aspect_ratio`) and then `shot_type` within each, so the operator can
 review the actual files rather than having to reconstruct what got made
 from one long `results` array. Call out any `failed` entries by their
 `error` rather than silently dropping them from the report.
 
-When `path` is a `/storage-redirect` URL (`AD_IMAGE_STORAGE=gcs`), embed it
-as a markdown image — `![product_only 1.91:1](path)` — immediately
-followed on its own line by a download link using `download_path` —
-`[⬇️ download](download_path)` (always present alongside a
-`/storage-redirect` `path`, no need to check for it first). This exact
+Whenever `download_path` is present — check for it, don't assume it
+from `AD_IMAGE_STORAGE`'s own setting, since `local` has it too now as
+long as `AD_IMAGE_OUTPUT_DIR` resolves inside the project directory —
+embed `path` as a markdown image — `![product_only 1.91:1](path)` —
+immediately followed on its own line by a download link using
+`download_path` — `[⬇️ download](download_path)`. This exact
 image-then-link pairing is what the Playground's own renderer looks for
 to show an inline preview with a working download button, instead of
-two separate, unrelated-looking elements. A local filesystem path isn't
-a link or an image at all — report it as plain text (or `` `code` ``),
-not markdown syntax, since a browser can't open it.
+two separate, unrelated-looking elements. The one case `download_path`
+is genuinely absent is the bare-filesystem-path fallback above — that's
+not a link or an image at all, and gets reported as plain text (or
+`` `code` ``), not markdown syntax, since a browser can't open it.
 
 Copy `path`/`download_path` exactly as given in the tool result — don't
 retype or reformat any part of it, particularly the scene's own slug
 inside the object name (whatever punctuation/casing `slugify` produced
-from the `scene_prompt`, verbatim). Getting it wrong 404s the redirect
+from the `scene_prompt`, verbatim). Getting it wrong 404s the route
 instead of showing the image, with no indication from the reply itself
 that anything was wrong.
 
-`path`/`download_path` are relative — `/storage-redirect?provider=gcs&bucket=...`, no
-`https://` scheme or host — on purpose (see saveImage's own doc
-comment). That's the whole, complete, correct value, not a shorthand or
-placeholder for a "real" URL — don't "complete" it into
+`path`/`download_path` are relative — `/storage-redirect?provider=gcs&...`
+or `/local-file?path=...`, no `https://` scheme or host — on purpose
+(see saveImage's own doc comment). That's the whole, complete, correct
+value, not a shorthand or placeholder for a "real" URL — don't
+"complete" a `/storage-redirect` one into
 `https://<bucket>.storage.googleapis.com/<object>` or
 `https://storage.googleapis.com/<bucket>/<object>` because that shape
 looks more familiar or finished. Confirmed live: doing that produces a

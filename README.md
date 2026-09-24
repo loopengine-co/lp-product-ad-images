@@ -89,8 +89,15 @@ plan one shape of batch.
   (portrait).
 
   **Storage**, chosen once via `AD_IMAGE_STORAGE` (default `local`):
-  - `local` — writes each PNG under `AD_IMAGE_OUTPUT_DIR`; `path` in each
-    result is a real filesystem path.
+  - `local` — writes each PNG under `AD_IMAGE_OUTPUT_DIR`; `path` (and
+    `download_path`) are a short `/local-file?...` URL — loopengine
+    core's own generic file-serving route (requires loopengine >= 0.1.57),
+    giving `local` storage the same inline preview/download-button
+    treatment `gcs` gets below — as long as `AD_IMAGE_OUTPUT_DIR`
+    resolves inside this deployment's own project directory (true for
+    its own relative-path default; an absolute path elsewhere falls
+    back to a bare filesystem path with no URL, same as before this
+    route existed).
   - `gcs` — uploads each PNG to `AD_IMAGE_GCS_BUCKET` (optionally under
     `AD_IMAGE_GCS_PREFIX`) instead; `path` (and `download_path`, for a
     forced browser download) are short `/storage-redirect?provider=gcs&...` URLs —

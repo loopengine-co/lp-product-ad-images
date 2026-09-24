@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { isAbsolute, join, relative } from 'node:path'
 import sharp from 'sharp'
 import type { ToolDefinition } from 'loopengine'
 
@@ -23,18 +23,20 @@ interface UnitResult {
   // reference different photos.
   product_image_url: string
   status: 'done' | 'failed'
-  // A local filesystem path (default, AD_IMAGE_STORAGE=local), or a
-  // short relative /storage-redirect URL when AD_IMAGE_STORAGE=gcs — see
-  // saveImage's own doc comment. Only openable from a browser already
-  // authenticated to this same loopengine server, unlike the raw signed
-  // URL this used to be — not a standalone shareable link anymore.
-  // Present only when status is "done".
+  // A short relative URL — /storage-redirect (AD_IMAGE_STORAGE=gcs) or
+  // /local-file (AD_IMAGE_STORAGE=local, when AD_IMAGE_OUTPUT_DIR
+  // resolves inside this deployment's own project directory) — or, only
+  // when AD_IMAGE_OUTPUT_DIR is set to an absolute path outside it, a
+  // bare filesystem path with no web-accessible URL at all. See
+  // saveImage's own doc comment. A URL here is only openable from a
+  // browser already authenticated to this same loopengine server — not
+  // a standalone shareable link. Present only when status is "done".
   path?: string
-  // A second /storage-redirect URL for the same object with
-  // disposition=attachment, forcing a real browser download instead of
-  // opening inline — only ever present alongside a storage-redirect `path`
-  // (AD_IMAGE_STORAGE=gcs); absent for a local filesystem path, which
-  // has no meaningful separate "download" URL to offer.
+  // A second URL for the same file with disposition=attachment, forcing
+  // a real browser download instead of opening inline — present
+  // whenever `path` is itself a URL (see its own doc comment); absent
+  // only for the bare-filesystem-path fallback case, which has no
+  // meaningful separate "download" URL to offer.
   download_path?: string
   width?: number
   height?: number
@@ -116,8 +118,10 @@ function validateStorageConfig(): void {
 
 interface SavedImage {
   path: string
-  // Only ever set alongside a real signed https:// path — see
-  // UnitResult.download_path's own doc comment for why.
+  // Set alongside a /storage-redirect or /local-file path (a real,
+  // openable URL) — never alongside a bare filesystem path, which has
+  // no separate "download" URL to offer. See UnitResult.download_path's
+  // own doc comment for why.
   downloadPath?: string
 }
 
@@ -179,6 +183,29 @@ async function saveImage(args: { buffer: Buffer; filename: string; outputDir: st
   await mkdir(args.outputDir, { recursive: true })
   const outputPath = join(args.outputDir, args.filename)
   await writeFile(outputPath, args.buffer)
+
+  // Same /local-file route AD_IMAGE_STORAGE=gcs's own /storage-redirect
+  // sits alongside — loopengine core's own generic "serve a file from
+  // this deployment's own project directory" route (adapters/http.ts's
+  // handleLocalFile), giving local storage the same preview/
+  // download-button treatment gcs already gets, instead of a bare path
+  // nothing but direct server access can open. Only offered when
+  // outputPath actually resolves inside process.cwd() — that route
+  // refuses anything outside it (see its own doc comment: it's a
+  // generic file server, not scoped to AD_IMAGE_OUTPUT_DIR specifically,
+  // so it can't tell "this ability's own configured output dir" from
+  // "an arbitrary path" any other way). AD_IMAGE_OUTPUT_DIR left at its
+  // own relative-path default is already under cwd; pointed at an
+  // absolute path elsewhere, this falls back to the bare path exactly
+  // like before — no preview/download URL for that file, same as an
+  // older loopengine core with no /local-file route at all.
+  const relativeToRoot = relative(process.cwd(), outputPath)
+  if (!isAbsolute(relativeToRoot) && !relativeToRoot.startsWith('..')) {
+    const pathParam = encodeURIComponent(relativeToRoot)
+    const viewUrl = `/local-file?path=${pathParam}`
+    const downloadUrl = `${viewUrl}&disposition=attachment&filename=${encodeURIComponent(args.filename)}`
+    return { path: viewUrl, downloadPath: downloadUrl }
+  }
   return { path: outputPath }
 }
 
