@@ -92,19 +92,21 @@ plan one shape of batch.
   - `local` — writes each PNG under `AD_IMAGE_OUTPUT_DIR`; `path` in each
     result is a real filesystem path.
   - `gcs` — uploads each PNG to `AD_IMAGE_GCS_BUCKET` (optionally under
-    `AD_IMAGE_GCS_PREFIX`) instead, then generates a V4 signed URL for it
-    (valid for `AD_IMAGE_GCS_SIGNED_URL_EXPIRY` seconds, default 7 days —
-    the GCS-imposed maximum) so `path` is a real `https://` link, not
-    just an internal `gs://` address. Signing requires credentials that
-    can actually sign (a service account key, or IAM `signBlob` via
-    impersonation) — plain user Application Default Credentials from
-    `gcloud auth application-default login` can't, so in that case
-    `path` falls back to the bare `gs://bucket/object` URI instead (the
-    upload itself still succeeds either way). Requires
-    `npm install @google-cloud/storage` in your own project (lazily
-    imported, so `local` users never need it). Job-status files always
-    stay local under `AD_IMAGE_OUTPUT_DIR/.jobs/` regardless of this
-    setting. If ADC alone can't sign, set
+    `AD_IMAGE_GCS_PREFIX`) instead; `path` (and `download_path`, for a
+    forced browser download) are short `/gcs-redirect?...` URLs —
+    loopengine core's own generic route (requires loopengine >= 0.1.55),
+    which signs a fresh, short-lived V4 URL and redirects on every
+    click, rather than this ability signing one long-lived URL itself at
+    generation time. Only openable from a browser already authenticated
+    to this same loopengine server (the same Basic Auth every other
+    route there needs) — not a standalone link you can share outside
+    it. Requires `npm install @google-cloud/storage` in your own project
+    (lazily imported by both this tool's own upload step and loopengine
+    core's redirect route, so `local` users never need it). Job-status
+    files always stay local under `AD_IMAGE_OUTPUT_DIR/.jobs/` regardless
+    of this setting. If Application Default Credentials alone can't sign
+    (plain `gcloud auth application-default login` can't; a service
+    account key or IAM `signBlob` via impersonation can), set
     `GOOGLE_APPLICATION_CREDENTIALS_JSON` to the entire contents of a
     downloaded service-account key file — the one setup path that needs
     nothing but the GCP Console and the Admin UI's Environment tab, no
@@ -145,13 +147,14 @@ Then:
      images (when storage is `local`) or job-status files (always)
      landing under `./generated/ad-images`.
    - Optionally `AD_IMAGE_STORAGE=gcs` plus `AD_IMAGE_GCS_BUCKET` (and
-     optionally `AD_IMAGE_GCS_PREFIX`, `AD_IMAGE_GCS_SIGNED_URL_EXPIRY`)
-     to upload images to GCS instead of writing them locally. Use a
-     service account key (`GOOGLE_APPLICATION_CREDENTIALS` pointing at
-     one, or `GOOGLE_APPLICATION_CREDENTIALS_JSON` pasted directly if you
-     can't get a file onto the server) rather than plain user ADC if you
-     want real signed URLs back — see the tool's own description above
-     for what happens otherwise.
+     optionally `AD_IMAGE_GCS_PREFIX`) to upload images to GCS instead of
+     writing them locally — requires loopengine >= 0.1.55 (serves the
+     `/gcs-redirect` route each generated image's URL now points at).
+     Use a service account key (`GOOGLE_APPLICATION_CREDENTIALS` pointing
+     at one, or `GOOGLE_APPLICATION_CREDENTIALS_JSON` pasted directly if
+     you can't get a file onto the server) rather than plain user ADC —
+     plain user ADC can't sign, and `/gcs-redirect` has no fallback for
+     that the way this tool's own upload step does; a click just 502s.
    - Optionally `AD_IMAGE_CONCURRENCY` (default `4`) to raise or lower
      how many generations one batch job runs at once — tune it against
      your actual provider rate limits.

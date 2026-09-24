@@ -24,17 +24,17 @@ interface UnitResult {
   product_image_url: string
   status: 'done' | 'failed'
   // A local filesystem path (default, AD_IMAGE_STORAGE=local), or a
-  // time-limited signed HTTPS URL when AD_IMAGE_STORAGE=gcs — falls back
-  // to a bare gs://bucket/object URI if signing itself isn't possible
-  // with whatever credentials are configured (see saveImage's own doc
-  // comment). Present only when status is "done".
+  // short relative /gcs-redirect URL when AD_IMAGE_STORAGE=gcs — see
+  // saveImage's own doc comment. Only openable from a browser already
+  // authenticated to this same loopengine server, unlike the raw signed
+  // URL this used to be — not a standalone shareable link anymore.
+  // Present only when status is "done".
   path?: string
-  // A second signed URL for the same object, forcing a real browser
-  // download (Content-Disposition: attachment) instead of opening
-  // inline — only ever present alongside a signed https:// `path`
-  // (AD_IMAGE_STORAGE=gcs, signing succeeded); absent for a local
-  // filesystem path or the gs:// fallback, neither of which has a
-  // meaningful separate "download" URL to offer.
+  // A second /gcs-redirect URL for the same object with
+  // disposition=attachment, forcing a real browser download instead of
+  // opening inline — only ever present alongside a gcs-redirect `path`
+  // (AD_IMAGE_STORAGE=gcs); absent for a local filesystem path, which
+  // has no meaningful separate "download" URL to offer.
   download_path?: string
   width?: number
   height?: number
@@ -122,12 +122,30 @@ interface SavedImage {
 }
 
 // Saves one generated image and returns where it landed — a local
-// filesystem path by default, or an accessible URL when
+// filesystem path by default, or a short redirect URL when
 // AD_IMAGE_STORAGE=gcs. @google-cloud/storage is imported lazily, not at
 // the top of the file, so installing it is only required for callers
 // who actually turn GCS storage on — everyone else (the local default)
 // never needs it, same reasoning as why sharp is a manual `npm install`
 // rather than something add-ability manages.
+//
+// The GCS branch no longer signs a URL itself — it returns
+// /gcs-redirect?bucket=...&object=..., loopengine core's own generic
+// route (adapters/http.ts's handleGcsRedirect), which signs fresh on
+// every click instead. Two things that fixes: the model's own reply has
+// to reproduce this URL to embed it as a markdown image/download link,
+// and a bucket+object name (human-readable, not random) is dramatically
+// cheaper and safer to reproduce than a ~300-character opaque
+// Signature — see core/known-urls.ts's own doc comment for what used to
+// go wrong here. A real behavior change worth knowing: this URL is
+// relative, not a standalone shareable link the old signed URL was —
+// only openable from a browser already authenticated to this same
+// server (same Basic Auth gate every other route here already needs),
+// and it depends on a loopengine core new enough to serve
+// /gcs-redirect at all (see this ability's own loopengineVersion floor
+// in loopengine.ability.json, bumped alongside this change so
+// installing/upgrading onto an older core refuses outright instead of
+// silently 404ing on first click).
 async function saveImage(args: { buffer: Buffer; filename: string; outputDir: string }): Promise<SavedImage> {
   const storage = process.env.AD_IMAGE_STORAGE || 'local'
   if (storage === 'gcs') {
@@ -152,43 +170,11 @@ async function saveImage(args: { buffer: Buffer; filename: string; outputDir: st
     const file = client.bucket(bucketName).file(objectName)
     await file.save(args.buffer, { contentType: 'image/png' })
 
-    // A bare gs://bucket/object URI isn't fetchable by anything outside
-    // GCP's own tooling — a signed URL is an actual https:// link usable
-    // in a browser or a chat UI. Signing requires credentials that can
-    // actually sign (a service account key, or IAM signBlob via
-    // impersonation) — plain user Application Default Credentials
-    // (`gcloud auth application-default login`) can't, and getSignedUrl
-    // throws in that case. The upload above already succeeded either
-    // way, so fall back to the bare URI rather than failing a unit whose
-    // image is genuinely sitting in the bucket, just not signable here.
-    try {
-      const expirySecondsRaw = Number(process.env.AD_IMAGE_GCS_SIGNED_URL_EXPIRY || '604800')
-      const expirySeconds = Number.isFinite(expirySecondsRaw) && expirySecondsRaw > 0 ? expirySecondsRaw : 604800
-      const expires = Date.now() + expirySeconds * 1000
-      const [viewUrl] = await file.getSignedUrl({ action: 'read', expires })
-      // A second signed URL for the exact same object, differing only in
-      // responseDisposition — GCS honors that as a real
-      // response-content-disposition query param, so the browser forces
-      // an actual download instead of opening the image inline,
-      // regardless of the requesting page's own origin (this is an HTTP
-      // response header, not the HTML `download` attribute, which
-      // browsers largely ignore for cross-origin links). If this second
-      // signing call fails for some reason the first didn't, downloadPath
-      // is just omitted — path (view) still works either way.
-      let downloadUrl: string | undefined
-      try {
-        ;[downloadUrl] = await file.getSignedUrl({
-          action: 'read',
-          expires,
-          responseDisposition: `attachment; filename="${args.filename}"`,
-        })
-      } catch {
-        downloadUrl = undefined
-      }
-      return { path: viewUrl, downloadPath: downloadUrl }
-    } catch {
-      return { path: `gs://${bucketName}/${objectName}` }
-    }
+    const bucketParam = encodeURIComponent(bucketName)
+    const objectParam = encodeURIComponent(objectName)
+    const viewUrl = `/gcs-redirect?bucket=${bucketParam}&object=${objectParam}`
+    const downloadUrl = `${viewUrl}&disposition=attachment&filename=${encodeURIComponent(args.filename)}`
+    return { path: viewUrl, downloadPath: downloadUrl }
   }
   await mkdir(args.outputDir, { recursive: true })
   const outputPath = join(args.outputDir, args.filename)

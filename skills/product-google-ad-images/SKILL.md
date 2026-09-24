@@ -319,42 +319,32 @@ message (a big one you already replied about — see "Don't poll a big job
 to completion in the same turn" above). Once the job's `status` is `"done"`
 or `"partial"`, each successful `results` entry's `path` is where the file
 actually landed — a local filesystem path under `AD_IMAGE_OUTPUT_DIR` by
-default, or (when the deployment has `AD_IMAGE_STORAGE=gcs` set) a
-time-limited signed HTTPS URL that's actually openable in a browser —
-falling back to a bare `gs://bucket/object` URI (not openable anywhere
-outside GCP's own tooling) if the configured credentials can't sign one.
-Report the full list of generated paths
-back, grouped by format (`aspect_ratio`) and then `shot_type` within
-each, so the operator can review the actual files rather than having to
-reconstruct what got made from one long `results` array. Call out any
-`failed` entries by their `error` rather than silently dropping them
-from the report.
+default, or (when the deployment has `AD_IMAGE_STORAGE=gcs` set) a short
+`/gcs-redirect?...` URL, relative to this same loopengine server, that
+resolves to the actual image when opened from a browser already logged
+into it. Report the full list of generated paths back, grouped by format
+(`aspect_ratio`) and then `shot_type` within each, so the operator can
+review the actual files rather than having to reconstruct what got made
+from one long `results` array. Call out any `failed` entries by their
+`error` rather than silently dropping them from the report.
 
-When `path` is a real `https://` URL (`AD_IMAGE_STORAGE=gcs`, signing
-succeeded), embed it as a markdown image — `![product_only 1.91:1](path)`
-— immediately followed on its own line by a download link using
-`download_path` when that field is present — `[⬇️ download](download_path)`.
-This exact image-then-link pairing is what the Playground's own renderer
-looks for to show an inline preview with a working download button,
-instead of two separate, unrelated-looking elements. If `download_path`
-is missing for a unit (the second signing call failed even though the
-first succeeded — rare, but see saveImage's own doc comment), just embed
-the image alone; don't invent a download link pointing at `path` instead,
-since that would open inline rather than actually downloading. A local
-filesystem path or a bare `gs://` fallback isn't a link or an image at
-all — report it as plain text (or `` `code` ``), not markdown syntax,
-since neither is something a browser can actually open.
+When `path` is a `/gcs-redirect` URL (`AD_IMAGE_STORAGE=gcs`), embed it
+as a markdown image — `![product_only 1.91:1](path)` — immediately
+followed on its own line by a download link using `download_path` —
+`[⬇️ download](download_path)` (always present alongside a
+`/gcs-redirect` `path`, no need to check for it first). This exact
+image-then-link pairing is what the Playground's own renderer looks for
+to show an inline preview with a working download button, instead of
+two separate, unrelated-looking elements. A local filesystem path isn't
+a link or an image at all — report it as plain text (or `` `code` ``),
+not markdown syntax, since a browser can't open it.
 
-`path`/`download_path` are each a few hundred characters of opaque
-signed-URL query string — a `Signature` param that's an exact HMAC over
-the whole URL. Copy it character-for-character from the tool result;
-don't retype, reformat, or "clean up" any part of it. One flipped or
-dropped character anywhere in it — easy to do by accident when
-reproducing a long random-looking string from memory instead of copying
-it straight from context — invalidates the signature, and the operator
-gets a bare `InvalidSecurity: ... malformed signature` XML error page
-instead of an image, with no indication from the reply itself that
-anything was wrong.
+Copy `path`/`download_path` exactly as given in the tool result — don't
+retype or reformat any part of it, particularly the scene's own slug
+inside the object name (whatever punctuation/casing `slugify` produced
+from the `scene_prompt`, verbatim). Getting it wrong 404s the redirect
+instead of showing the image, with no indication from the reply itself
+that anything was wrong.
 
 This still holds no matter how many results there are — a batch of a
 dozen images gets a dozen embedded images, not a condensed list of
