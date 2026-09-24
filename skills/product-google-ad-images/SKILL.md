@@ -344,3 +344,35 @@ since that would open inline rather than actually downloading. A local
 filesystem path or a bare `gs://` fallback isn't a link or an image at
 all — report it as plain text (or `` `code` ``), not markdown syntax,
 since neither is something a browser can actually open.
+
+`path`/`download_path` are each a few hundred characters of opaque
+signed-URL query string — a `Signature` param that's an exact HMAC over
+the whole URL. Copy it character-for-character from the tool result;
+don't retype, reformat, or "clean up" any part of it. One flipped or
+dropped character anywhere in it — easy to do by accident when
+reproducing a long random-looking string from memory instead of copying
+it straight from context — invalidates the signature, and the operator
+gets a bare `InvalidSecurity: ... malformed signature` XML error page
+instead of an image, with no indication from the reply itself that
+anything was wrong.
+
+This still holds no matter how many results there are — a batch of a
+dozen images gets a dozen embedded images, not a condensed list of
+`[View image](path)` / `[Download](download_path)` text links. A plain
+link is real markdown too, so nothing stops it from rendering — it just
+renders as a link, not a preview, which defeats the entire point of
+this convention: the operator has to click through every single one to
+see what was actually made, instead of scanning the reply. Two results
+under one `shot_type` heading looks exactly like this, one full
+image-then-link pair per line, not paired up side by side or condensed
+into one link each:
+
+```
+### Product only
+
+![product_only 1.91:1](path-for-shot-0)
+[⬇️ download](download_path-for-shot-0)
+
+![product_only 1.91:1](path-for-shot-1)
+[⬇️ download](download_path-for-shot-1)
+```

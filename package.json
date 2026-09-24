@@ -1,6 +1,6 @@
 {
   "name": "lp-product-ad-images",
-  "version": "3.9.0",
+  "version": "3.10.0",
   "description": "A loopengine ability: a generate_google_ad_images + check_google_ad_image_job tool pair — one job per whole batch (not per shot), bounded concurrency, incremental progress, per-shot product photo overrides, OpenAI or Google Nano Banana image-edit, every ratio independently generated, saved locally or to GCS with real signed URLs — plus a skill for sizing and generating anything from one image to a full Google Ads asset set.",
   "license": "MIT",
   "keywords": ["loopengine", "loopengine-ability", "google-ads", "product-photography", "image-generation", "openai", "nano-banana", "gemini", "gcs"],
