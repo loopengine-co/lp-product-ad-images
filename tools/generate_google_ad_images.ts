@@ -29,6 +29,13 @@ interface UnitResult {
   // with whatever credentials are configured (see saveImage's own doc
   // comment). Present only when status is "done".
   path?: string
+  // A second signed URL for the same object, forcing a real browser
+  // download (Content-Disposition: attachment) instead of opening
+  // inline — only ever present alongside a signed https:// `path`
+  // (AD_IMAGE_STORAGE=gcs, signing succeeded); absent for a local
+  // filesystem path or the gs:// fallback, neither of which has a
+  // meaningful separate "download" URL to offer.
+  download_path?: string
   width?: number
   height?: number
   error?: string
@@ -107,6 +114,13 @@ function validateStorageConfig(): void {
   }
 }
 
+interface SavedImage {
+  path: string
+  // Only ever set alongside a real signed https:// path — see
+  // UnitResult.download_path's own doc comment for why.
+  downloadPath?: string
+}
+
 // Saves one generated image and returns where it landed — a local
 // filesystem path by default, or an accessible URL when
 // AD_IMAGE_STORAGE=gcs. @google-cloud/storage is imported lazily, not at
@@ -114,7 +128,7 @@ function validateStorageConfig(): void {
 // who actually turn GCS storage on — everyone else (the local default)
 // never needs it, same reasoning as why sharp is a manual `npm install`
 // rather than something add-ability manages.
-async function saveImage(args: { buffer: Buffer; filename: string; outputDir: string }): Promise<string> {
+async function saveImage(args: { buffer: Buffer; filename: string; outputDir: string }): Promise<SavedImage> {
   const storage = process.env.AD_IMAGE_STORAGE || 'local'
   if (storage === 'gcs') {
     const bucketName = process.env.AD_IMAGE_GCS_BUCKET as string // validateStorageConfig already required this
@@ -150,16 +164,36 @@ async function saveImage(args: { buffer: Buffer; filename: string; outputDir: st
     try {
       const expirySecondsRaw = Number(process.env.AD_IMAGE_GCS_SIGNED_URL_EXPIRY || '604800')
       const expirySeconds = Number.isFinite(expirySecondsRaw) && expirySecondsRaw > 0 ? expirySecondsRaw : 604800
-      const [signedUrl] = await file.getSignedUrl({ action: 'read', expires: Date.now() + expirySeconds * 1000 })
-      return signedUrl
+      const expires = Date.now() + expirySeconds * 1000
+      const [viewUrl] = await file.getSignedUrl({ action: 'read', expires })
+      // A second signed URL for the exact same object, differing only in
+      // responseDisposition — GCS honors that as a real
+      // response-content-disposition query param, so the browser forces
+      // an actual download instead of opening the image inline,
+      // regardless of the requesting page's own origin (this is an HTTP
+      // response header, not the HTML `download` attribute, which
+      // browsers largely ignore for cross-origin links). If this second
+      // signing call fails for some reason the first didn't, downloadPath
+      // is just omitted — path (view) still works either way.
+      let downloadUrl: string | undefined
+      try {
+        ;[downloadUrl] = await file.getSignedUrl({
+          action: 'read',
+          expires,
+          responseDisposition: `attachment; filename="${args.filename}"`,
+        })
+      } catch {
+        downloadUrl = undefined
+      }
+      return { path: viewUrl, downloadPath: downloadUrl }
     } catch {
-      return `gs://${bucketName}/${objectName}`
+      return { path: `gs://${bucketName}/${objectName}` }
     }
   }
   await mkdir(args.outputDir, { recursive: true })
   const outputPath = join(args.outputDir, args.filename)
   await writeFile(outputPath, args.buffer)
-  return outputPath
+  return { path: outputPath }
 }
 
 // Keeps the actual product accurate across every shot instead of letting
@@ -526,7 +560,7 @@ async function runJob(args: {
 
       const sceneSlug = slugify(unit.scenePrompt) || 'shot'
       const filename = `${stamp}-shot${unit.shotIndex}-${unit.shotType}-${sceneSlug}-${ratioLabel(unit.aspectRatioSpec)}.png`
-      const path = await saveImage({ buffer: cropped, filename, outputDir })
+      const { path, downloadPath } = await saveImage({ buffer: cropped, filename, outputDir })
 
       results.push({
         shot_index: unit.shotIndex,
@@ -535,6 +569,7 @@ async function runJob(args: {
         product_image_url: unit.productImageUrl,
         status: 'done',
         path,
+        download_path: downloadPath,
         width: crop.width,
         height: crop.height,
       })

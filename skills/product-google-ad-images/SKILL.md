@@ -112,7 +112,7 @@ shots can take several minutes. Poll
   "status": "processing",
   "progress": { "total": 36, "done": 22, "failed": 1, "processing": 13 },
   "results": [
-    { "shot_index": 0, "shot_type": "product_only", "aspect_ratio": "1.91:1", "product_image_url": "https://...", "status": "done", "path": "...", "width": 1536, "height": 804 },
+    { "shot_index": 0, "shot_type": "product_only", "aspect_ratio": "1.91:1", "product_image_url": "https://...", "status": "done", "path": "...", "download_path": "...", "width": 1536, "height": 804 },
     { "shot_index": 3, "shot_type": "lifestyle_product", "aspect_ratio": "1:1", "product_image_url": "https://...", "status": "failed", "error": "..." }
   ]
 }
@@ -305,3 +305,18 @@ each, so the operator can review the actual files rather than having to
 reconstruct what got made from one long `results` array. Call out any
 `failed` entries by their `error` rather than silently dropping them
 from the report.
+
+When `path` is a real `https://` URL (`AD_IMAGE_STORAGE=gcs`, signing
+succeeded), embed it as a markdown image — `![product_only 1.91:1](path)`
+— immediately followed on its own line by a download link using
+`download_path` when that field is present — `[⬇️ download](download_path)`.
+This exact image-then-link pairing is what the Playground's own renderer
+looks for to show an inline preview with a working download button,
+instead of two separate, unrelated-looking elements. If `download_path`
+is missing for a unit (the second signing call failed even though the
+first succeeded — rare, but see saveImage's own doc comment), just embed
+the image alone; don't invent a download link pointing at `path` instead,
+since that would open inline rather than actually downloading. A local
+filesystem path or a bare `gs://` fallback isn't a link or an image at
+all — report it as plain text (or `` `code` ``), not markdown syntax,
+since neither is something a browser can actually open.
