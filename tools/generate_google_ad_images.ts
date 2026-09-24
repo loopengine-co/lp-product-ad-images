@@ -24,15 +24,15 @@ interface UnitResult {
   product_image_url: string
   status: 'done' | 'failed'
   // A local filesystem path (default, AD_IMAGE_STORAGE=local), or a
-  // short relative /gcs-redirect URL when AD_IMAGE_STORAGE=gcs — see
+  // short relative /storage-redirect URL when AD_IMAGE_STORAGE=gcs — see
   // saveImage's own doc comment. Only openable from a browser already
   // authenticated to this same loopengine server, unlike the raw signed
   // URL this used to be — not a standalone shareable link anymore.
   // Present only when status is "done".
   path?: string
-  // A second /gcs-redirect URL for the same object with
+  // A second /storage-redirect URL for the same object with
   // disposition=attachment, forcing a real browser download instead of
-  // opening inline — only ever present alongside a gcs-redirect `path`
+  // opening inline — only ever present alongside a storage-redirect `path`
   // (AD_IMAGE_STORAGE=gcs); absent for a local filesystem path, which
   // has no meaningful separate "download" URL to offer.
   download_path?: string
@@ -130,22 +130,22 @@ interface SavedImage {
 // rather than something add-ability manages.
 //
 // The GCS branch no longer signs a URL itself — it returns
-// /gcs-redirect?bucket=...&object=..., loopengine core's own generic
-// route (adapters/http.ts's handleGcsRedirect), which signs fresh on
-// every click instead. Two things that fixes: the model's own reply has
-// to reproduce this URL to embed it as a markdown image/download link,
-// and a bucket+object name (human-readable, not random) is dramatically
-// cheaper and safer to reproduce than a ~300-character opaque
-// Signature — see core/known-urls.ts's own doc comment for what used to
-// go wrong here. A real behavior change worth knowing: this URL is
-// relative, not a standalone shareable link the old signed URL was —
-// only openable from a browser already authenticated to this same
-// server (same Basic Auth gate every other route here already needs),
-// and it depends on a loopengine core new enough to serve
-// /gcs-redirect at all (see this ability's own loopengineVersion floor
-// in loopengine.ability.json, bumped alongside this change so
-// installing/upgrading onto an older core refuses outright instead of
-// silently 404ing on first click).
+// /storage-redirect?provider=gcs&bucket=...&object=..., loopengine
+// core's own generic route (adapters/http.ts's handleStorageRedirect),
+// which signs fresh on every click instead. Two things that fixes: the
+// model's own reply has to reproduce this URL to embed it as a markdown
+// image/download link, and a bucket+object name (human-readable, not
+// random) is dramatically cheaper and safer to reproduce than a
+// ~300-character opaque Signature — see core/known-urls.ts's own doc
+// comment for what used to go wrong here. A real behavior change worth
+// knowing: this URL is relative, not a standalone shareable link the
+// old signed URL was — only openable from a browser already
+// authenticated to this same server (same Basic Auth gate every other
+// route here already needs), and it depends on a loopengine core new
+// enough to serve /storage-redirect at all (see this ability's own
+// loopengineVersion floor in loopengine.ability.json, bumped alongside
+// this change so installing/upgrading onto an older core refuses
+// outright instead of silently 404ing on first click).
 async function saveImage(args: { buffer: Buffer; filename: string; outputDir: string }): Promise<SavedImage> {
   const storage = process.env.AD_IMAGE_STORAGE || 'local'
   if (storage === 'gcs') {
@@ -172,7 +172,7 @@ async function saveImage(args: { buffer: Buffer; filename: string; outputDir: st
 
     const bucketParam = encodeURIComponent(bucketName)
     const objectParam = encodeURIComponent(objectName)
-    const viewUrl = `/gcs-redirect?bucket=${bucketParam}&object=${objectParam}`
+    const viewUrl = `/storage-redirect?provider=gcs&bucket=${bucketParam}&object=${objectParam}`
     const downloadUrl = `${viewUrl}&disposition=attachment&filename=${encodeURIComponent(args.filename)}`
     return { path: viewUrl, downloadPath: downloadUrl }
   }

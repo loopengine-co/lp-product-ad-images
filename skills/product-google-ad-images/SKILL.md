@@ -320,7 +320,7 @@ to completion in the same turn" above). Once the job's `status` is `"done"`
 or `"partial"`, each successful `results` entry's `path` is where the file
 actually landed — a local filesystem path under `AD_IMAGE_OUTPUT_DIR` by
 default, or (when the deployment has `AD_IMAGE_STORAGE=gcs` set) a short
-`/gcs-redirect?...` URL, relative to this same loopengine server, that
+`/storage-redirect?provider=gcs&...` URL, relative to this same loopengine server, that
 resolves to the actual image when opened from a browser already logged
 into it. Report the full list of generated paths back, grouped by format
 (`aspect_ratio`) and then `shot_type` within each, so the operator can
@@ -328,11 +328,11 @@ review the actual files rather than having to reconstruct what got made
 from one long `results` array. Call out any `failed` entries by their
 `error` rather than silently dropping them from the report.
 
-When `path` is a `/gcs-redirect` URL (`AD_IMAGE_STORAGE=gcs`), embed it
+When `path` is a `/storage-redirect` URL (`AD_IMAGE_STORAGE=gcs`), embed it
 as a markdown image — `![product_only 1.91:1](path)` — immediately
 followed on its own line by a download link using `download_path` —
 `[⬇️ download](download_path)` (always present alongside a
-`/gcs-redirect` `path`, no need to check for it first). This exact
+`/storage-redirect` `path`, no need to check for it first). This exact
 image-then-link pairing is what the Playground's own renderer looks for
 to show an inline preview with a working download button, instead of
 two separate, unrelated-looking elements. A local filesystem path isn't
@@ -346,7 +346,7 @@ from the `scene_prompt`, verbatim). Getting it wrong 404s the redirect
 instead of showing the image, with no indication from the reply itself
 that anything was wrong.
 
-`path`/`download_path` are relative — `/gcs-redirect?bucket=...`, no
+`path`/`download_path` are relative — `/storage-redirect?provider=gcs&bucket=...`, no
 `https://` scheme or host — on purpose (see saveImage's own doc
 comment). That's the whole, complete, correct value, not a shorthand or
 placeholder for a "real" URL — don't "complete" it into

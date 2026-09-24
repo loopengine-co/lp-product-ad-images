@@ -93,7 +93,7 @@ plan one shape of batch.
     result is a real filesystem path.
   - `gcs` — uploads each PNG to `AD_IMAGE_GCS_BUCKET` (optionally under
     `AD_IMAGE_GCS_PREFIX`) instead; `path` (and `download_path`, for a
-    forced browser download) are short `/gcs-redirect?...` URLs —
+    forced browser download) are short `/storage-redirect?provider=gcs&...` URLs —
     loopengine core's own generic route (requires loopengine >= 0.1.55),
     which signs a fresh, short-lived V4 URL and redirects on every
     click, rather than this ability signing one long-lived URL itself at
@@ -149,11 +149,11 @@ Then:
    - Optionally `AD_IMAGE_STORAGE=gcs` plus `AD_IMAGE_GCS_BUCKET` (and
      optionally `AD_IMAGE_GCS_PREFIX`) to upload images to GCS instead of
      writing them locally — requires loopengine >= 0.1.55 (serves the
-     `/gcs-redirect` route each generated image's URL now points at).
+     `/storage-redirect` route each generated image's URL now points at).
      Use a service account key (`GOOGLE_APPLICATION_CREDENTIALS` pointing
      at one, or `GOOGLE_APPLICATION_CREDENTIALS_JSON` pasted directly if
      you can't get a file onto the server) rather than plain user ADC —
-     plain user ADC can't sign, and `/gcs-redirect` has no fallback for
+     plain user ADC can't sign, and `/storage-redirect` has no fallback for
      that the way this tool's own upload step does; a click just 502s.
    - Optionally `AD_IMAGE_CONCURRENCY` (default `4`) to raise or lower
      how many generations one batch job runs at once — tune it against
