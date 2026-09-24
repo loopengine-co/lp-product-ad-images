@@ -65,25 +65,43 @@ assuming the full set is wanted rather than guessing at a smaller one.
 ## Choosing quality
 
 `quality` applies to the whole batch, not per shot — one call, one cost
-tier for every unit in it. Default to `"high"` unless the request signals
-otherwise; it's already ad-ready and is what most requests actually want.
-Don't ask the operator which quality to use — infer it from what they
-said, the same way `aspect_ratios`/`shot_type` get inferred above:
+tier for every unit in it. Default to `"medium"` unless the request
+signals otherwise — not a quality compromise for what Google Ads
+actually needs: even this tool's *lowest* quality tier already generates
+well above Google Ads' own recommended image sizes for every format
+(1200×628 landscape, 1200×1200 square, 960×1200 portrait — confirmed
+against Google's own published specs), so "medium" is the cost/latency-
+conscious default, not a visibly worse one. Don't ask the operator which
+quality to use — infer it from what they said, the same way
+`aspect_ratios`/`shot_type` get inferred above:
 
+- **Nothing said about quality** — `"medium"` (the default). Already
+  comfortably above what Google Ads needs; right for the large majority
+  of real ad creative.
 - **"draft"/"quick"/"rough"/"doesn't need to be high quality"/testing a
-  lot of concepts cheaply** — `"low"` or `"medium"`. Good for previewing
-  scene ideas or a large shot-mix before committing to a real batch.
-- **Nothing said about quality** — `"high"` (the default). Right for the
-  large majority of real ad creative.
+  lot of concepts cheaply** — `"low"`. Cheapest tier, still good for
+  previewing scene ideas or a large shot-mix before committing to a real
+  batch.
 - **"as sharp/detailed as possible"/fine printed text or a logo on the
   product that needs to stay crisp/a hero shot going into a large
-  placement** — `"xhigh"` or `"max"`. Real added cost for a real
-  difference only in these cases; not a blanket "better" setting to
-  reach for by default. Only valid on `gpt-image-2.5-sunburst`/`-flare`
-  (this ability's default `OPENAI_IMAGE_MODEL`) — rejected outright by
-  `gpt-image-2` and earlier, and on the Google provider `xhigh`/`max`
-  just mean the same `2K` size `"high"` already gets (Google's own lever
-  is a binary 1K/2K, not a five-tier scale).
+  placement** — `"high"`, `"xhigh"`, or `"max"`. Real added cost for a
+  real difference only in these cases; not a blanket "better" setting to
+  reach for by default, and not needed just to clear Google Ads' own
+  resolution requirements — those are already met at the default. On
+  OpenAI, `"xhigh"`/`"max"` are only valid on
+  `gpt-image-2.5-sunburst`/`-flare` (this ability's default
+  `OPENAI_IMAGE_MODEL`) — rejected outright by `gpt-image-2` and earlier.
+  On the Google provider, `"xhigh"`/`"max"` both map to that model's own
+  `4K` resolution tier — one real step up from what `"high"` gets (`2K`)
+  on either `gemini-3.1-flash-image` or `gemini-3.1-pro-image` — though
+  `xhigh` and `max` land on the same `4K` tier as each other, since each
+  model's own tiers cap there with nothing higher left to tell the two
+  apart by. Flash and Pro don't share one resolution table, though: Pro
+  has no `512px` tier at all, and its own `1K` and `2K` tiers cost
+  exactly the same — so on Pro specifically, `"low"`/`"medium"` buy
+  nothing over `"high"`; that provider only genuinely saves anything by
+  going the other direction (choosing OpenAI, or Flash instead of Pro)
+  for a cheap draft batch.
 
 ## Starting the job and polling it
 
@@ -281,7 +299,13 @@ Be concrete about the same things a real photo brief would specify:
   studio — this does more to make 18-20 images look like a real,
   varied set than almost anything else.
 - **Composition**, only if it matters for this shot — off-center,
-  close crop, negative space for ad text overlay.
+  negative space for ad text overlay. Avoid asking for a tight/close
+  crop specifically — every shot already gets center-cropped down to
+  its final ratio after generation (see "The three formats" above), and
+  the tool's own prompt already tells the model to leave margin around
+  the product for exactly that reason; stacking a "close crop" request
+  on top works against that and risks losing part of the product to the
+  crop.
 
 Keep each `scene_prompt` to one clear idea. A prompt trying to cover
 three different moods at once tends to produce a muddled result, not

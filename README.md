@@ -69,7 +69,7 @@ plan one shape of batch.
     (landscape 1536×1024, square 1024×1024, portrait 1024×1536).
   - `google` — Google's Gemini image models, aka "Nano Banana":
     `gemini-3.1-flash-image` (**Nano Banana 2**, the default) or
-    `gemini-3-pro-image` (**Nano Banana Pro**, higher quality and cost)
+    `gemini-3.1-pro-image` (**Nano Banana Pro**, higher quality and cost)
     via `GOOGLE_IMAGE_MODEL`. Supports a real `aspect_ratio` parameter
     with ten presets — square and both portrait specs (`4:5`, `9:16`)
     are exact presets here, so those need no cropping at all; only
@@ -139,7 +139,7 @@ Then:
    - OpenAI (default, no `AD_IMAGE_PROVIDER` needed): `OPENAI_API_KEY`,
      optionally `OPENAI_IMAGE_MODEL`.
    - Google/Nano Banana: `AD_IMAGE_PROVIDER=google`, `GEMINI_API_KEY`,
-     optionally `GOOGLE_IMAGE_MODEL=gemini-3-pro-image` for Nano Banana
+     optionally `GOOGLE_IMAGE_MODEL=gemini-3.1-pro-image` for Nano Banana
      Pro instead of the default Nano Banana 2.
    - Optionally `AD_IMAGE_OUTPUT_DIR` if you don't want generated
      images (when storage is `local`) or job-status files (always)

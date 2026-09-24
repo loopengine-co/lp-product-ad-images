@@ -202,13 +202,29 @@ async function saveImage(args: { buffer: Buffer; filename: string; outputDir: st
 // reasoning. Each prefix constrains what the edit is allowed to change;
 // scene_prompt (the caller's own input) supplies the rest — the specific
 // setting, styling, and mood for this one shot.
+// Every generation lands at whichever fixed native size/preset the
+// provider actually offers (OPENAI_NATIVE_SIZES / GOOGLE_ASPECT_PRESETS
+// below) — neither provider can generate Google Ads' own required ratios
+// (1.91:1, 9:16, 4:5, ...) directly, so cropRectFor always center-crops
+// the result down to the exact target ratio afterward. A composition
+// that fills the frame edge-to-edge loses whatever sits in the trimmed
+// margin; MARGIN_INSTRUCTION is appended to every shot type's own prefix
+// for exactly this reason, not just product_only (a lifestyle/cover shot
+// crops the exact same way, only the composition around the product
+// differs).
+const MARGIN_INSTRUCTION =
+  ' Leave comfortable margin around the product on every side — it must not touch or extend past any edge of the frame. The final image gets center-cropped afterward, and anything sitting at the very edge risks being trimmed off.'
+
 const SHOT_TYPE_PREFIX: Record<ShotType, string> = {
   product_only:
-    'Photorealistic e-commerce product photography. Keep the product exactly as shown in the reference image — same shape, colors, proportions, and any printed text or logo, unchanged. No people, no hands, no added props beyond a simple surface and background. Clean studio lighting, sharp focus on the product, commercial ad quality.',
+    'Photorealistic e-commerce product photography. Keep the product exactly as shown in the reference image — same shape, colors, proportions, and any printed text or logo, unchanged. No people, no hands, no added props beyond a simple surface and background. Clean studio lighting, sharp focus on the product, commercial ad quality.' +
+    MARGIN_INSTRUCTION,
   lifestyle_product:
-    'Photorealistic lifestyle product photography for an ad. Keep the product exactly as shown in the reference image — same shape, colors, proportions, and any printed text or logo, unchanged. Show it in realistic natural use — a hand, partial body, or its real-world setting interacting with it plausibly. The product stays clearly recognizable and is not obscured.',
+    'Photorealistic lifestyle product photography for an ad. Keep the product exactly as shown in the reference image — same shape, colors, proportions, and any printed text or logo, unchanged. Show it in realistic natural use — a hand, partial body, or its real-world setting interacting with it plausibly. The product stays clearly recognizable and is not obscured.' +
+    MARGIN_INSTRUCTION,
   cover_lifestyle:
-    'Photorealistic lifestyle hero/cover photography for an ad campaign. Keep the product exactly as shown in the reference image — same shape, colors, proportions, and any printed text or logo, unchanged. Aspirational, editorial setting and natural lighting; the product is present and identifiable but the scene itself carries the mood, not a tight product close-up.',
+    'Photorealistic lifestyle hero/cover photography for an ad campaign. Keep the product exactly as shown in the reference image — same shape, colors, proportions, and any printed text or logo, unchanged. Aspirational, editorial setting and natural lighting; the product is present and identifiable but the scene itself carries the mood, not a tight product close-up.' +
+    MARGIN_INSTRUCTION,
 }
 
 function parseAspectRatio(spec: string): number {
@@ -271,10 +287,12 @@ interface GenerationArgs {
   quality: string
 }
 
-// gpt-image-* only ever generates at a small fixed set of native pixel
-// sizes — there is no way to request an arbitrary ratio like Google
+// Fallback for an OPENAI_IMAGE_MODEL that isn't gpt-image-2.5-sunburst/
+// flare (see OPENAI_CUSTOM_SIZE_MODELS below for those two) — an older
+// gpt-image-* model only ever generates at one of these 3 fixed native
+// pixel sizes, with no way to request an arbitrary ratio like Google
 // Ads' 1.91:1 landscape or 9:16 portrait specs directly. Every ratio
-// gets its own independent generation at whichever native size is
+// still gets its own independent generation at whichever native size is
 // *closest* to it — never a shared landscape generation cropped down to
 // other ratios — since cropping a 9:16 frame out of a 1536x1024
 // landscape source would throw away most of the composition, and
@@ -289,21 +307,53 @@ const OPENAI_NATIVE_SIZES = [
   { width: 1024, height: 1536 }, // portrait
 ] as const
 
+// gpt-image-2.5-sunburst/flare specifically (confirmed against OpenAI's
+// own docs) additionally accept a custom size as a literal "WIDTHxHEIGHT"
+// string — width and height each a multiple of 16, total pixels between
+// 655,360 and 8,294,400 (4K), aspect ratio between 1:3 and 3:1 (every
+// ratio this tool ever requests is comfortably inside that range). Older
+// models (gpt-image-2 and earlier) only ever support the 3 fixed native
+// sizes above — OPENAI_NATIVE_SIZES stays the fallback for those.
+const OPENAI_CUSTOM_SIZE_MODELS = ['gpt-image-2.5-sunburst', 'gpt-image-2.5-flare']
+// Matches OPENAI_NATIVE_SIZES' own landscape/portrait pixel count — same
+// rough cost/quality tier as before, just at the exact target ratio
+// instead of whichever of the 3 fixed sizes happens to be closest.
+const OPENAI_CUSTOM_SIZE_PIXEL_BUDGET = 1536 * 1024
+const OPENAI_SIZE_MULTIPLE = 16
+
+// Computing the exact target ratio directly here — instead of picking
+// the nearest of 3 fixed native sizes and relying on cropRectFor to trim
+// the difference afterward — means that crop only ever removes a few
+// pixels of rounding error, not real composition. This is what actually
+// eliminates the "product cropped at the edge" problem at its root for
+// these two models, rather than just mitigating it (see
+// MARGIN_INSTRUCTION above, which still matters for the rounding-error
+// margin and for older models still on OPENAI_NATIVE_SIZES).
+function computeCustomOpenAISize(targetRatio: number): { width: number; height: number } {
+  const rawWidth = Math.sqrt(OPENAI_CUSTOM_SIZE_PIXEL_BUDGET * targetRatio)
+  const rawHeight = rawWidth / targetRatio
+  const width = Math.max(OPENAI_SIZE_MULTIPLE, Math.round(rawWidth / OPENAI_SIZE_MULTIPLE) * OPENAI_SIZE_MULTIPLE)
+  const height = Math.max(OPENAI_SIZE_MULTIPLE, Math.round(rawHeight / OPENAI_SIZE_MULTIPLE) * OPENAI_SIZE_MULTIPLE)
+  return { width, height }
+}
+
 async function generateWithOpenAI({ productBytes, productContentType, prompt, targetRatio, quality }: GenerationArgs): Promise<Generation> {
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) throw new Error('generate_google_ad_images: OPENAI_API_KEY is not set (required when AD_IMAGE_PROVIDER=openai, the default)')
   const model = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2.5-sunburst'
 
-  const nativeSize = OPENAI_NATIVE_SIZES.reduce((best, size) => {
-    const bestDiff = Math.abs(best.width / best.height - targetRatio)
-    const diff = Math.abs(size.width / size.height - targetRatio)
-    return diff < bestDiff ? size : best
-  })
+  const size = OPENAI_CUSTOM_SIZE_MODELS.includes(model)
+    ? computeCustomOpenAISize(targetRatio)
+    : OPENAI_NATIVE_SIZES.reduce((best, s) => {
+        const bestDiff = Math.abs(best.width / best.height - targetRatio)
+        const diff = Math.abs(s.width / s.height - targetRatio)
+        return diff < bestDiff ? s : best
+      })
 
   const form = new FormData()
   form.set('model', model)
   form.set('prompt', prompt)
-  form.set('size', `${nativeSize.width}x${nativeSize.height}`)
+  form.set('size', `${size.width}x${size.height}`)
   form.set('quality', quality)
   form.set('image', new Blob([productBytes], { type: productContentType }), 'product')
 
@@ -320,11 +370,11 @@ async function generateWithOpenAI({ productBytes, productContentType, prompt, ta
   const b64 = body.data?.[0]?.b64_json
   if (!b64) throw new Error('generate_google_ad_images: OpenAI response carried no image data')
 
-  return { buffer: Buffer.from(b64, 'base64'), width: nativeSize.width, height: nativeSize.height }
+  return { buffer: Buffer.from(b64, 'base64'), width: size.width, height: size.height }
 }
 
 // Google's Gemini image models ("Nano Banana") — gemini-3.1-flash-image
-// (Nano Banana 2) and gemini-3-pro-image (Nano Banana Pro) — support a
+// (Nano Banana 2) and gemini-3.1-pro-image (Nano Banana Pro) — support a
 // real aspect_ratio parameter with a fixed set of presets, unlike
 // OpenAI's three pixel sizes. Every ratio still gets its own independent
 // generation at whichever preset is nearest to it, same as the OpenAI
@@ -332,6 +382,36 @@ async function generateWithOpenAI({ productBytes, productContentType, prompt, ta
 // here so those need no crop at all; only 1.91:1 isn't itself a preset,
 // so 16:9 (the closest) still gets a small trim afterward.
 const GOOGLE_ASPECT_PRESETS = ['1:1', '16:9', '9:16', '3:2', '2:3', '3:4', '4:3', '4:5', '5:4', '21:9']
+
+// gemini-3.1-flash-image (Nano Banana 2) and gemini-3.1-pro-image (Nano
+// Banana Pro) don't share one resolution/cost table (confirmed against
+// Google's own docs for each) — flash has 4 real tiers (512px/1K/2K/4K,
+// costing roughly 747/1120/1680/2520 tokens, each about 1.5x the one
+// below), while pro only ever offers 3 (1K/2K/4K, no 512px tier at all)
+// — and pro's own 1K and 2K cost the *exact same* 1120 tokens, meaning
+// requesting 1K on pro is strictly worse for zero savings, never worth
+// picking. Each gets its own quality mapping for this reason — sharing
+// one would either ask pro for a 512px tier it doesn't have, or leave
+// low/medium/high on pro's own strictly-dominated 1K tier for no reason.
+// "high" stays 2K on both — xhigh and max both land on 4K on both
+// models too, since each one's own tiers cap there with nothing above
+// it left to tell the two apart by. This tool's own default is
+// "medium", not "high" — see the quality input_schema's own description
+// for why.
+const GOOGLE_FLASH_IMAGE_SIZE_BY_QUALITY: Record<string, string> = {
+  low: '512px',
+  medium: '1K',
+  high: '2K',
+  xhigh: '4K',
+  max: '4K',
+}
+const GOOGLE_PRO_IMAGE_SIZE_BY_QUALITY: Record<string, string> = {
+  low: '2K',
+  medium: '2K',
+  high: '2K',
+  xhigh: '4K',
+  max: '4K',
+}
 
 function nearestGooglePreset(targetRatio: number): string {
   return GOOGLE_ASPECT_PRESETS.reduce((best, preset) => {
@@ -368,15 +448,16 @@ function findImageData(body: unknown): string | undefined {
 async function generateWithGoogle({ productBytes, productContentType, prompt, targetRatio, quality }: GenerationArgs): Promise<Generation> {
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) throw new Error('generate_google_ad_images: GEMINI_API_KEY is not set (required when AD_IMAGE_PROVIDER=google)')
-  const model = process.env.GOOGLE_IMAGE_MODEL || 'gemini-3.1-flash-image' // Nano Banana 2; set to gemini-3-pro-image for Nano Banana Pro
+  const model = process.env.GOOGLE_IMAGE_MODEL || 'gemini-3.1-flash-image' // Nano Banana 2; set to gemini-3.1-pro-image for Nano Banana Pro
 
   const aspectRatio = nearestGooglePreset(targetRatio)
-  // Google's own quality lever is a binary 1K/2K, not OpenAI's five-tier
-  // low/medium/high/xhigh/max scale — "high" and up all mean "give me
-  // the better one" here, not just an exact "high" match (which would
-  // otherwise silently give xhigh/max *less* detail than plain "high",
-  // the opposite of what asking for a higher tier should ever do).
-  const imageSize = quality === 'high' || quality === 'xhigh' || quality === 'max' ? '2K' : '1K'
+  // Falls back to '2K' (this tool's own default quality's own tier, and
+  // the one size both models' own mappings happen to agree on) for a
+  // quality value outside the known five — shouldn't happen given the
+  // tool's own input_schema enum already restricts it, but a fallback
+  // beats an undefined image_size reaching the request at all.
+  const imageSizeByQuality = model === 'gemini-3.1-pro-image' ? GOOGLE_PRO_IMAGE_SIZE_BY_QUALITY : GOOGLE_FLASH_IMAGE_SIZE_BY_QUALITY
+  const imageSize = imageSizeByQuality[quality] || '2K'
 
   const res = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
     method: 'POST',
@@ -645,7 +726,7 @@ export const generateGoogleAdImages: ToolDefinition = {
         type: 'string',
         enum: ['low', 'medium', 'high', 'xhigh', 'max'],
         description:
-          'Generation quality, also the main cost lever, applied to every shot in this batch — default "high" for ad-ready output. "xhigh"/"max" are only valid on gpt-image-2.5-sunburst/flare (the default OPENAI_IMAGE_MODEL) — gpt-image-2 and earlier only support low/medium/high and reject the other two.',
+          'Generation quality, also the main cost lever, applied to every shot in this batch — default "medium" (every resolution this tool ever generates at, even the lowest quality tier, already clears Google Ads\' own recommended image sizes by a wide margin, so "medium" is the cost/latency-conscious choice, not a quality compromise for what Google Ads actually needs). "xhigh"/"max" are only valid on gpt-image-2.5-sunburst/flare (the default OPENAI_IMAGE_MODEL) — gpt-image-2 and earlier only support low/medium/high and reject the other two.',
       },
     },
     required: ['shots'],
@@ -691,7 +772,7 @@ export const generateGoogleAdImages: ToolDefinition = {
       const targetRatios = aspectRatioSpecs.map(parseAspectRatio) // throws synchronously on a bad ratio spec, at any shot index
       return { shotType, scenePrompt: shotObj.scene_prompt, aspectRatioSpecs, targetRatios, productImageUrl }
     })
-    const quality = typeof input.quality === 'string' && input.quality ? input.quality : 'high'
+    const quality = typeof input.quality === 'string' && input.quality ? input.quality : 'medium'
 
     const jobId = randomUUID()
     const createdAt = new Date().toISOString()
