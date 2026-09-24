@@ -346,6 +346,17 @@ from the `scene_prompt`, verbatim). Getting it wrong 404s the redirect
 instead of showing the image, with no indication from the reply itself
 that anything was wrong.
 
+`path`/`download_path` are relative — `/gcs-redirect?bucket=...`, no
+`https://` scheme or host — on purpose (see saveImage's own doc
+comment). That's the whole, complete, correct value, not a shorthand or
+placeholder for a "real" URL — don't "complete" it into
+`https://<bucket>.storage.googleapis.com/<object>` or
+`https://storage.googleapis.com/<bucket>/<object>` because that shape
+looks more familiar or finished. Confirmed live: doing that produces a
+URL that was never signed at all, and `AccessDenied`s — a silent
+failure the reply itself gives no hint of, since the text looks like a
+normal, working link either way.
+
 This still holds no matter how many results there are — a batch of a
 dozen images gets a dozen embedded images, not a condensed list of
 `[View image](path)` / `[Download](download_path)` text links. A plain
